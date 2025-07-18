@@ -1,12 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, BarChart3, PieChart, Calendar, AlertCircle, Plus, Edit, Trash2, UserPlus, FileSpreadsheet, Save, X } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, BarChart3, PieChart, Calendar, AlertCircle, Plus, Edit, Trash2, UserPlus, FileSpreadsheet, Save, X, LogOut, User } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { useAuth } from './AuthContext';
+import { operatorService, assignmentService, callDataService } from './firestoreService';
 
 const TeleasistenciaApp = () => {
+  const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [callData, setCallData] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [followUpHistory, setFollowUpHistory] = useState([]);
+  const [firebaseStatus, setFirebaseStatus] = useState('connecting'); // 'connecting', 'connected', 'demo'
   const [dashboardMetrics, setDashboardMetrics] = useState({
     totalCalls: 0,
     successfulCalls: 0,
@@ -39,44 +43,172 @@ const TeleasistenciaApp = () => {
     { id: 5, operator: 'Ana Rodríguez', beneficiary: 'Carlos Díaz', phone: '987654325', commune: 'Valparaíso' },
   ];
 
+  // Ref para controlar si ya se están cargando los datos
+  const loadingRef = useRef(false);
+  const [dataLoaded, setDataLoaded] = useState(false);
+
   useEffect(() => {
+    if (user && !dataLoaded && !loadingRef.current) {
+      loadUserData();
+    }
+  }, [user, dataLoaded]);
+
+  // Cargar datos del usuario desde Firestore
+  const loadUserData = async () => {
+    if (loadingRef.current) return; // Evitar cargas múltiples
+    
+    loadingRef.current = true;
+    setFirebaseStatus('connecting');
+    
+    try {
+      // Cargar operadores
+      const userOperators = await operatorService.getByUser(user.uid);
+      
+      // Verificar si la operación fue exitosa
+      if (userOperators !== null) {
+        setOperators(userOperators || []);
+
+        // Cargar asignaciones
+        const userAssignments = await assignmentService.getAllUserAssignments(user.uid);
+        setOperatorAssignments(userAssignments || {});
+
+        // Cargar datos de llamadas
+        const userCallData = await callDataService.getCallData(user.uid);
+        setCallData(userCallData || []);
+
+        // Generar assignments generales para compatibilidad
+        generateGeneralAssignments(userAssignments || {}, userOperators || []);
+        
+        // Generar datos de métricas
+        generateSampleData();
+        
+        setFirebaseStatus('connected');
+        setDataLoaded(true);
+        console.log('✅ Conectado a Firebase - persistencia habilitada');
+      } else {
+        // Permisos insuficientes, usar datos de ejemplo
+        throw new Error('Insufficient permissions');
+      }
+      
+    } catch (error) {
+      setFirebaseStatus('demo');
+      setDataLoaded(true);
+      // En caso de error, inicializar con datos de ejemplo
+      initializeWithSampleData();
+    } finally {
+      loadingRef.current = false;
+    }
+  };
+
+  // Generar assignments generales a partir de operator assignments
+  const generateGeneralAssignments = (operatorAssignments, operators) => {
+    const allAssignments = [];
+    
+    Object.entries(operatorAssignments).forEach(([operatorId, assignments]) => {
+      const operator = operators.find(op => op.id === operatorId);
+      if (operator && assignments) {
+        assignments.forEach(assignment => {
+          allAssignments.push({
+            id: assignment.id,
+            operator: operator.name,
+            beneficiary: assignment.beneficiary,
+            phone: assignment.primaryPhone,
+            commune: assignment.commune
+          });
+        });
+      }
+    });
+    
+    setAssignments(allAssignments);
+  };
+
+  // Inicializar con datos de ejemplo (fallback)
+  const initializeWithSampleData = () => {
+    console.log('🔄 Inicializando con datos de ejemplo...');
     setAssignments(sampleAssignments);
-    generateSampleData();
     initializeOperators();
-  }, []);
+    generateSampleData();
+    console.log('✅ Datos de ejemplo inicializados');
+  };
 
   // Inicializar operadores de ejemplo
   const initializeOperators = () => {
     const sampleOperators = [
-      { id: 1, name: 'María González', email: 'maria.gonzalez@central.cl', phone: '987654321' },
-      { id: 2, name: 'Ana Rodríguez', email: 'ana.rodriguez@central.cl', phone: '987654322' },
-      { id: 3, name: 'Luis Martínez', email: 'luis.martinez@central.cl', phone: '987654323' },
-      { id: 4, name: 'Carmen Torres', email: 'carmen.torres@central.cl', phone: '987654324' },
-      { id: 5, name: 'Pedro Sánchez', email: 'pedro.sanchez@central.cl', phone: '987654325' },
+      { 
+        id: 'sample-1', 
+        name: 'María González', 
+        email: 'maria.gonzalez@central.cl', 
+        phone: '987654321',
+        userId: user?.uid || 'demo-user'
+      },
+      { 
+        id: 'sample-2', 
+        name: 'Ana Rodríguez', 
+        email: 'ana.rodriguez@central.cl', 
+        phone: '987654322',
+        userId: user?.uid || 'demo-user'
+      },
+      { 
+        id: 'sample-3', 
+        name: 'Luis Martínez', 
+        email: 'luis.martinez@central.cl', 
+        phone: '987654323',
+        userId: user?.uid || 'demo-user'
+      },
+      { 
+        id: 'sample-4', 
+        name: 'Carmen Torres', 
+        email: 'carmen.torres@central.cl', 
+        phone: '987654324',
+        userId: user?.uid || 'demo-user'
+      },
+      { 
+        id: 'sample-5', 
+        name: 'Pedro Sánchez', 
+        email: 'pedro.sanchez@central.cl', 
+        phone: '987654325',
+        userId: user?.uid || 'demo-user'
+      },
     ];
-    setOperators(sampleOperators);
+    
+    // Filtrar elementos null o inválidos antes de setear
+    const validOperators = sampleOperators.filter(op => op && op.id && op.name);
+    setOperators(validOperators);
   };
 
   // Funciones para gestión de operadores
-  const handleCreateOperator = () => {
+  const handleCreateOperator = async () => {
     if (operatorForm.name.trim() === '') return;
     
-    const newOperator = {
-      id: Date.now(),
-      ...operatorForm
-    };
-    
-    setOperators([...operators, newOperator]);
-    setOperatorForm({ name: '', email: '', phone: '' });
-    setShowCreateOperator(false);
+    try {
+      const newOperator = await operatorService.create(user.uid, operatorForm);
+      setOperators([...operators, newOperator]);
+      setOperatorForm({ name: '', email: '', phone: '' });
+      setShowCreateOperator(false);
+    } catch (error) {
+      console.error('Error creating operator:', error);
+      alert('Error al crear teleoperador. Intenta nuevamente.');
+    }
   };
 
-  const handleDeleteOperator = (operatorId) => {
-    setOperators(operators.filter(op => op.id !== operatorId));
-    // También eliminar sus asignaciones
-    const newAssignments = { ...operatorAssignments };
-    delete newAssignments[operatorId];
-    setOperatorAssignments(newAssignments);
+  const handleDeleteOperator = async (operatorId) => {
+    try {
+      await operatorService.delete(operatorId);
+      await assignmentService.deleteOperatorAssignments(user.uid, operatorId);
+      
+      setOperators(operators.filter(op => op.id !== operatorId));
+      // También eliminar sus asignaciones
+      const newAssignments = { ...operatorAssignments };
+      delete newAssignments[operatorId];
+      setOperatorAssignments(newAssignments);
+      
+      // Actualizar assignments generales
+      const filteredAssignments = assignments.filter(a => !a.id.toString().startsWith(`${operatorId}-`));
+      setAssignments(filteredAssignments);
+    } catch (error) {
+      console.error('Error deleting operator:', error);
+      alert('Error al eliminar teleoperador. Intenta nuevamente.');
+    }
   };
 
   const handleFileUploadForOperator = (event, operatorId) => {
@@ -98,7 +230,7 @@ const TeleasistenciaApp = () => {
     event.target.value = '';
   };
 
-  const processOperatorAssignments = (data, operatorId) => {
+  const processOperatorAssignments = async (data, operatorId) => {
     if (data.length < 2) return;
     
     const operator = operators.find(op => op.id === operatorId);
@@ -119,37 +251,52 @@ const TeleasistenciaApp = () => {
       };
     }).filter(item => item.beneficiary && item.primaryPhone);
 
-    // Actualizar asignaciones del operador
-    setOperatorAssignments(prev => ({
-      ...prev,
-      [operatorId]: processedData
-    }));
+    try {
+      // Guardar en Firestore
+      await assignmentService.saveOperatorAssignments(user.uid, operatorId, processedData);
 
-    // Actualizar assignments generales para compatibilidad
-    const newGeneralAssignments = processedData.map(item => ({
-      id: item.id,
-      operator: item.operatorName,
-      beneficiary: item.beneficiary,
-      phone: item.primaryPhone,
-      commune: item.commune
-    }));
+      // Actualizar estado local
+      setOperatorAssignments(prev => ({
+        ...prev,
+        [operatorId]: processedData
+      }));
 
-    setAssignments(prev => {
-      // Eliminar asignaciones anteriores de este operador
-      const filteredPrev = prev.filter(a => !a.id.toString().startsWith(`${operatorId}-`));
-      return [...filteredPrev, ...newGeneralAssignments];
-    });
+      // Actualizar assignments generales para compatibilidad
+      const newGeneralAssignments = processedData.map(item => ({
+        id: item.id,
+        operator: item.operatorName,
+        beneficiary: item.beneficiary,
+        phone: item.primaryPhone,
+        commune: item.commune
+      }));
 
-    setUploadingFor(null);
+      setAssignments(prev => {
+        // Eliminar asignaciones anteriores de este operador
+        const filteredPrev = prev.filter(a => !a.id.toString().startsWith(`${operatorId}-`));
+        return [...filteredPrev, ...newGeneralAssignments];
+      });
+
+      setUploadingFor(null);
+    } catch (error) {
+      console.error('Error saving assignments:', error);
+      alert('Error al guardar asignaciones. Intenta nuevamente.');
+    }
   };
 
-  const clearOperatorAssignments = (operatorId) => {
-    const newAssignments = { ...operatorAssignments };
-    delete newAssignments[operatorId];
-    setOperatorAssignments(newAssignments);
+  const clearOperatorAssignments = async (operatorId) => {
+    try {
+      await assignmentService.deleteOperatorAssignments(user.uid, operatorId);
+      
+      const newAssignments = { ...operatorAssignments };
+      delete newAssignments[operatorId];
+      setOperatorAssignments(newAssignments);
 
-    // También eliminar de assignments generales
-    setAssignments(prev => prev.filter(a => !a.id.toString().startsWith(`${operatorId}-`)));
+      // También eliminar de assignments generales
+      setAssignments(prev => prev.filter(a => !a.id.toString().startsWith(`${operatorId}-`)));
+    } catch (error) {
+      console.error('Error clearing assignments:', error);
+      alert('Error al limpiar asignaciones. Intenta nuevamente.');
+    }
   };
 
   const generateSampleData = () => {
@@ -310,9 +457,9 @@ const TeleasistenciaApp = () => {
   );
 
   const Sidebar = () => (
-    <div className="w-64 bg-white shadow-lg h-full">
-      <div className="p-6">
-        <h2 className="text-xl font-bold text-gray-800 mb-8">WebApp de Seguimiento de Llamadas</h2>
+    <div className="w-64 bg-white shadow-lg h-full flex flex-col">
+      <div className="p-6 flex-1">
+        <h2 className="text-xl font-bold text-gray-800 mb-2">WebApp de Seguimiento de Llamadas</h2>
         <p className="text-xs text-gray-500 mb-6">© 2025</p>
         
         <nav className="space-y-2">
@@ -341,6 +488,30 @@ const TeleasistenciaApp = () => {
             onClick={() => setActiveTab('history')}
           />
         </nav>
+      </div>
+      
+      {/* User Info and Logout */}
+      <div className="p-6 border-t border-gray-200">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+            <User className="w-5 h-5 text-blue-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-gray-900 truncate">
+              {user?.displayName || 'Usuario'}
+            </p>
+            <p className="text-xs text-gray-500 truncate">
+              {user?.email}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={logout}
+          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+        >
+          <LogOut className="w-4 h-4" />
+          Cerrar Sesión
+        </button>
       </div>
     </div>
   );
@@ -703,12 +874,12 @@ const TeleasistenciaApp = () => {
 
       {/* Lista de operadores */}
       <div className="space-y-4">
-        {operators.map((operator) => (
+        {operators.filter(operator => operator && operator.id).map((operator) => (
           <div key={operator.id} className="bg-white rounded-lg shadow-md p-6">
             <div className="flex justify-between items-start mb-4">
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-2">
-                  <h4 className="text-lg font-semibold text-gray-900">{operator.name}</h4>
+                  <h4 className="text-lg font-semibold text-gray-900">{operator.name || 'Operador sin nombre'}</h4>
                   {operatorAssignments[operator.id] && (
                     <span className="bg-green-100 text-green-800 text-xs font-medium px-2 py-1 rounded-full">
                       {operatorAssignments[operator.id].length} beneficiarios
@@ -916,6 +1087,33 @@ const TeleasistenciaApp = () => {
               {activeTab === 'history' && 'Historial de Seguimientos'}
             </h1>
           </div>
+
+          {/* Firebase Status Alert */}
+          {firebaseStatus === 'demo' && (
+            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-blue-500 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <h3 className="text-blue-800 font-medium">Modo Local</h3>
+                  <p className="text-blue-700 text-sm mt-1">
+                    La aplicación funciona con datos locales. Para persistencia en la nube, completa la configuración de Firebase.
+                  </p>
+                  <p className="text-blue-600 text-xs mt-2">
+                    📖 Consulta FIREBASE_SETUP.md para instrucciones de configuración
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {firebaseStatus === 'connecting' && (
+            <div className="mb-6 p-4 bg-slate-50 border border-slate-200 rounded-lg">
+              <div className="flex items-center gap-3">
+                <div className="w-5 h-5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
+                <span className="text-slate-700 text-sm">Verificando configuración de Firebase...</span>
+              </div>
+            </div>
+          )}
           
           {activeTab === 'dashboard' && <Dashboard />}
           {activeTab === 'calls' && <CallsRegistry />}

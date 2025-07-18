@@ -7,12 +7,15 @@ node_modules/
 dist/
 build/
 
-# Development
-.DS_Store
+# Environment variables
+.env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Development
+.DS_Store
 
 # Logs
 npm-debug.log*

@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Operadores - solo el dueño puede leer/escribir
+    match /operators/{document} {
+      allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+    }
+    
+    // Asignaciones - solo el dueño puede leer/escribir
+    match /assignments/{document} {
+      allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+    }
+    
+    // Datos de llamadas - solo el dueño puede leer/escribir
+    match /callData/{document} {
+      allow read, write: if request.auth != null && document == request.auth.uid;
+    }
+    
+    // Datos de usuario - solo el dueño puede leer/escribir
+    match /userData/{document} {
+      allow read, write: if request.auth != null && document == request.auth.uid;
+    }
+  }
+}
