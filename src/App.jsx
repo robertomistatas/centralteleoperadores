@@ -53,6 +53,14 @@ const TeleasistenciaApp = () => {
     }
   }, [user, dataLoaded]);
 
+  // Reanalizar datos cuando cambian las asignaciones
+  useEffect(() => {
+    if (callData.length > 0 && assignments.length > 0) {
+      console.log('🔄 Re-analizando datos tras actualización de asignaciones...');
+      analyzeCallData(callData);
+    }
+  }, [assignments]);
+
   // Cargar datos del usuario desde Firestore
   const loadUserData = async () => {
     if (loadingRef.current) return; // Evitar cargas múltiples
@@ -79,8 +87,15 @@ const TeleasistenciaApp = () => {
         // Generar assignments generales para compatibilidad
         generateGeneralAssignments(userAssignments || {}, userOperators || []);
         
-        // Generar datos de métricas
-        generateSampleData();
+        // Si hay datos de llamadas reales, analizarlos; sino, usar datos de ejemplo
+        if (userCallData && userCallData.length > 0) {
+          console.log('📊 Analizando datos reales de llamadas...');
+          // Esperar a que los assignments se actualicen, luego analizar
+          setTimeout(() => analyzeCallData(userCallData), 100);
+        } else {
+          console.log('📝 No hay datos de llamadas, inicializando métricas por defecto...');
+          generateSampleData();
+        }
         
         setFirebaseStatus('connected');
         setDataLoaded(true);
@@ -300,9 +315,20 @@ const TeleasistenciaApp = () => {
   };
 
   const generateSampleData = () => {
+    // Solo generar datos de ejemplo si no hay datos reales de llamadas
+    if (callData.length > 0) {
+      console.log('📊 Datos reales disponibles, omitiendo generación de datos de ejemplo');
+      return;
+    }
+    
+    console.log('📝 Generando datos de ejemplo...');
+    
     // Generar datos de ejemplo
-    const operators = ['María González', 'Ana Rodríguez', 'Luis Martínez', 'Carmen Torres', 'Pedro Sánchez'];
-    const sampleMetrics = operators.map(op => ({
+    const operatorNames = operators.length > 0 
+      ? operators.map(op => op.name)
+      : ['María González', 'Ana Rodríguez', 'Luis Martínez', 'Carmen Torres', 'Pedro Sánchez'];
+    
+    const sampleMetrics = operatorNames.map(op => ({
       operator: op,
       totalCalls: Math.floor(Math.random() * 50) + 20,
       totalMinutes: Math.floor(Math.random() * 500) + 100,
@@ -317,14 +343,14 @@ const TeleasistenciaApp = () => {
     setOperatorMetrics(sampleMetrics);
     setHourlyDistribution(hourlyData);
     
-    // Actualizar métricas del dashboard
+    // Actualizar métricas del dashboard con valores de ejemplo
     setDashboardMetrics({
       totalCalls: 150,
       successfulCalls: 120,
       failedCalls: 30,
       beneficiaries: 85,
-      activeAssignments: 5,
-      operators: 5,
+      activeAssignments: assignments.length || 5,
+      operators: operators.length || 5,
       protocolCompliance: 85,
       pendingFollowUps: 12
     });
@@ -337,7 +363,8 @@ const TeleasistenciaApp = () => {
       'urgente': 'bg-red-100 text-red-800'
     };
     
-    const sampleFollowUps = sampleAssignments.map(assignment => ({
+    const assignmentsToUse = assignments.length > 0 ? assignments : sampleAssignments;
+    const sampleFollowUps = assignmentsToUse.map(assignment => ({
       ...assignment,
       status: statuses[Math.floor(Math.random() * statuses.length)],
       lastCall: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toLocaleDateString(),
@@ -366,7 +393,7 @@ const TeleasistenciaApp = () => {
     }
   };
 
-  const processExcelData = (data) => {
+  const processExcelData = async (data) => {
     if (data.length < 2) return;
     
     const processedData = data.slice(1).map(row => ({
@@ -384,6 +411,18 @@ const TeleasistenciaApp = () => {
       apiId: row[11]
     }));
 
+    // Guardar datos en Firebase
+    try {
+      if (firebaseStatus === 'connected') {
+        const success = await callDataService.saveCallData(user.uid, processedData);
+        if (success) {
+          console.log('✅ Datos de llamadas guardados en Firebase');
+        }
+      }
+    } catch (error) {
+      console.error('Error guardando datos en Firebase:', error);
+    }
+
     setCallData(processedData);
     
     // Analizar datos y actualizar métricas
@@ -392,41 +431,137 @@ const TeleasistenciaApp = () => {
 
   const analyzeCallData = (data) => {
     const successfulCalls = data.filter(call => call.result === 'Llamado exitoso');
-    const incomingCalls = successfulCalls.filter(call => call.event === 'Entrante');
-    const outgoingCalls = successfulCalls.filter(call => call.event === 'Saliente');
+    const failedCalls = data.filter(call => call.result !== 'Llamado exitoso');
     
-    // Actualizar métricas
+    // Calcular beneficiarios únicos
+    const uniqueBeneficiaries = new Set(data.map(call => call.beneficiary)).size;
+    
+    // Actualizar métricas del dashboard con datos reales
     setDashboardMetrics(prev => ({
       ...prev,
       totalCalls: data.length,
       successfulCalls: successfulCalls.length,
-      failedCalls: data.length - successfulCalls.length
+      failedCalls: failedCalls.length,
+      beneficiaries: uniqueBeneficiaries,
+      activeAssignments: assignments.length,
+      operators: operators.length,
+      protocolCompliance: data.length > 0 ? Math.round((successfulCalls.length / data.length) * 100) : 0,
+      pendingFollowUps: failedCalls.length
     }));
 
-    // Análisis por teleoperadora
+    // Análisis por teleoperadora con datos reales
     const operatorAnalysis = {};
-    successfulCalls.forEach(call => {
+    
+    // Primero inicializar con todos los operadores
+    operators.forEach(op => {
+      operatorAnalysis[op.name] = {
+        operator: op.name,
+        totalCalls: 0,
+        totalMinutes: 0,
+        avgDuration: 0
+      };
+    });
+    
+    // Luego agregar datos de llamadas
+    data.forEach(call => {
       const assignment = assignments.find(a => a.beneficiary === call.beneficiary);
-      if (assignment) {
-        if (!operatorAnalysis[assignment.operator]) {
-          operatorAnalysis[assignment.operator] = {
-            operator: assignment.operator,
-            totalCalls: 0,
-            totalMinutes: 0,
-            avgDuration: 0
-          };
-        }
+      if (assignment && operatorAnalysis[assignment.operator]) {
         operatorAnalysis[assignment.operator].totalCalls++;
-        operatorAnalysis[assignment.operator].totalMinutes += parseInt(call.duration) / 60 || 0;
+        
+        // Convertir duración de segundos a minutos
+        const duration = parseInt(call.duration) || 0;
+        operatorAnalysis[assignment.operator].totalMinutes += duration / 60;
       }
     });
 
     // Calcular promedio de duración
     Object.values(operatorAnalysis).forEach(op => {
-      op.avgDuration = op.totalCalls > 0 ? op.totalMinutes / op.totalCalls : 0;
+      op.avgDuration = op.totalCalls > 0 ? Math.round(op.totalMinutes / op.totalCalls) : 0;
+      op.totalMinutes = Math.round(op.totalMinutes);
     });
 
     setOperatorMetrics(Object.values(operatorAnalysis));
+    
+    // Generar historial de seguimientos basado en datos reales
+    generateFollowUpHistory(data);
+    
+    // Generar distribución horaria
+    generateHourlyDistribution(data);
+  };
+
+  // Generar historial de seguimientos basado en datos reales
+  const generateFollowUpHistory = (callData) => {
+    const beneficiaryStatus = {};
+    
+    // Analizar cada beneficiario y determinar su estado
+    callData.forEach(call => {
+      const beneficiary = call.beneficiary;
+      if (!beneficiaryStatus[beneficiary]) {
+        beneficiaryStatus[beneficiary] = {
+          beneficiary,
+          calls: [],
+          lastResult: call.result,
+          lastDate: call.date
+        };
+      }
+      
+      beneficiaryStatus[beneficiary].calls.push(call);
+      
+      // Mantener la llamada más reciente
+      if (new Date(call.date) > new Date(beneficiaryStatus[beneficiary].lastDate)) {
+        beneficiaryStatus[beneficiary].lastResult = call.result;
+        beneficiaryStatus[beneficiary].lastDate = call.date;
+      }
+    });
+    
+    // Generar historial con estado real
+    const followUps = Object.values(beneficiaryStatus).map(item => {
+      const assignment = assignments.find(a => a.beneficiary === item.beneficiary);
+      let status = 'pendiente';
+      let colorClass = 'bg-yellow-100 text-yellow-800';
+      
+      // Determinar estado basado en el resultado de la última llamada
+      if (item.lastResult === 'Llamado exitoso') {
+        status = 'al-dia';
+        colorClass = 'bg-green-100 text-green-800';
+      } else if (item.calls.length > 3) {
+        status = 'urgente';
+        colorClass = 'bg-red-100 text-red-800';
+      }
+      
+      return {
+        id: item.beneficiary,
+        operator: assignment ? assignment.operator : 'Sin asignar',
+        beneficiary: item.beneficiary,
+        phone: assignment ? assignment.phone : 'N/A',
+        commune: assignment ? assignment.commune : 'N/A',
+        status,
+        lastCall: item.lastDate,
+        callCount: item.calls.length,
+        colorClass
+      };
+    });
+    
+    setFollowUpHistory(followUps);
+  };
+
+  // Generar distribución horaria basada en datos reales
+  const generateHourlyDistribution = (callData) => {
+    const hourlyData = Array.from({ length: 24 }, (_, i) => ({
+      hour: i,
+      calls: 0
+    }));
+    
+    callData.forEach(call => {
+      if (call.startTime) {
+        const hour = parseInt(call.startTime.split(':')[0]) || 0;
+        if (hour >= 0 && hour < 24) {
+          hourlyData[hour].calls++;
+        }
+      }
+    });
+    
+    setHourlyDistribution(hourlyData);
   };
 
   const filteredFollowUps = followUpHistory.filter(item => {
