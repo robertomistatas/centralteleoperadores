@@ -640,6 +640,26 @@ const TeleasistenciaApp = () => {
             </p>
           </div>
         </div>
+        
+        {/* Indicador de estado de conexión */}
+        <div className="mb-4 p-2 rounded-lg bg-gray-50">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${
+              firebaseStatus === 'connected' ? 'bg-green-500' : 
+              firebaseStatus === 'connecting' ? 'bg-yellow-500' : 'bg-orange-500'
+            }`}></div>
+            <span className="text-xs text-gray-600">
+              {firebaseStatus === 'connected' ? 'Firebase conectado' : 
+               firebaseStatus === 'connecting' ? 'Conectando...' : 'Modo demo'}
+            </span>
+          </div>
+          {callData.length > 0 && (
+            <p className="text-xs text-gray-500 mt-1">
+              {callData.length} llamadas cargadas
+            </p>
+          )}
+        </div>
+        
         <button
           onClick={logout}
           className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -665,8 +685,82 @@ const TeleasistenciaApp = () => {
     </button>
   );
 
+  // Componente de estado de datos
+  const DataStatusBanner = () => {
+    const getStatusInfo = () => {
+      if (firebaseStatus === 'connecting') {
+        return {
+          color: 'bg-yellow-50 border-yellow-200',
+          icon: '🔄',
+          title: 'Conectando...',
+          message: 'Conectando con Firebase para cargar datos'
+        };
+      }
+      
+      if (firebaseStatus === 'connected') {
+        if (callData.length > 0) {
+          return {
+            color: 'bg-green-50 border-green-200',
+            icon: '✅',
+            title: 'Datos reales activos',
+            message: `Mostrando datos reales de ${callData.length} llamadas registradas`
+          };
+        } else {
+          return {
+            color: 'bg-blue-50 border-blue-200',
+            icon: 'ℹ️',
+            title: 'Firebase conectado - Sin datos de llamadas',
+            message: 'Conectado a Firebase. Sube un archivo Excel para ver datos reales'
+          };
+        }
+      }
+      
+      return {
+        color: 'bg-orange-50 border-orange-200',
+        icon: '⚠️',
+        title: 'Modo demostración',
+        message: 'Mostrando datos de ejemplo. Configura Firebase para persistencia completa'
+      };
+    };
+
+    const status = getStatusInfo();
+    
+    const handleRefreshData = async () => {
+      if (firebaseStatus === 'connected') {
+        setDataLoaded(false);
+        await loadUserData();
+      }
+    };
+    
+    return (
+      <div className={`${status.color} border rounded-lg p-4 mb-6`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center">
+            <span className="text-lg mr-3">{status.icon}</span>
+            <div>
+              <h3 className="font-semibold text-gray-800">{status.title}</h3>
+              <p className="text-sm text-gray-600">{status.message}</p>
+            </div>
+          </div>
+          {firebaseStatus === 'connected' && (
+            <button
+              onClick={handleRefreshData}
+              className="px-3 py-1 text-xs bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+              title="Recargar datos desde Firebase"
+            >
+              🔄 Sincronizar
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const Dashboard = () => (
     <div className="space-y-6">
+      {/* Banner de estado de datos */}
+      <DataStatusBanner />
+      
       {/* Métricas principales */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <MetricCard
