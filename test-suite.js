@@ -1,4 +1,4 @@
-// 🧪 Script de Pruebas Automatizadas - Central Teleoperadores
+// 🧪 Script de Pruebas Automatizadas - Mistatas Seguimiento de llamadas
 // Este script se puede ejecutar en la consola del navegador para realizar pruebas
 
 console.log('🚀 Iniciando pruebas automatizadas...');

@@ -1,4 +1,4 @@
-# 🧪 Plan de Pruebas - Central Teleoperadores
+# 🧪 Plan de Pruebas - Mistatas Seguimiento de llamadas
 
 ## ✅ **Estado Actual del Servidor**
 - 🚀 **URL**: http://localhost:5173/centralteleoperadores/

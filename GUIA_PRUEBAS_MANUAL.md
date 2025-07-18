@@ -1,4 +1,4 @@
-# 🧪 GUÍA DE PRUEBAS MANUALES - Central Teleoperadores
+# 🧪 GUÍA DE PRUEBAS MANUALES - Mistatas Seguimiento de llamadas
 
 ## 📋 **Instrucciones de Uso**
 Sigue estos pasos para probar sistemáticamente todas las funcionalidades.

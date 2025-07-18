@@ -86,7 +86,7 @@ const LoginForm = () => {
             <Phone className="w-8 h-8 text-blue-600" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900 mb-2">
-            Central de Teleoperadores
+            Mistatas - Seguimiento de llamadas
           </h1>
           <p className="text-gray-600">
             {isLogin ? 'Inicia sesión en tu cuenta' : 'Crea tu cuenta nueva'}

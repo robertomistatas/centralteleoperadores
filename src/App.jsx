@@ -459,7 +459,7 @@ const TeleasistenciaApp = () => {
   const Sidebar = () => (
     <div className="w-64 bg-white shadow-lg h-full flex flex-col">
       <div className="p-6 flex-1">
-        <h2 className="text-xl font-bold text-gray-800 mb-2">WebApp de Seguimiento de Llamadas</h2>
+        <h2 className="text-xl font-bold text-gray-800 mb-2">Mistatas - Seguimiento de llamadas</h2>
         <p className="text-xs text-gray-500 mb-6">© 2025</p>
         
         <nav className="space-y-2">

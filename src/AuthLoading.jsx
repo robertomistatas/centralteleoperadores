@@ -9,7 +9,7 @@ const AuthLoading = () => {
           <Phone className="w-10 h-10 text-blue-600 animate-pulse" />
         </div>
         <h2 className="text-xl font-semibold text-gray-900 mb-2">
-          Central de Teleoperadores
+          Mistatas - Seguimiento de llamadas
         </h2>
         <div className="flex items-center justify-center gap-2">
           <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce"></div>

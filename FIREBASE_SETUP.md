@@ -99,5 +99,5 @@ Si necesitas ayuda con la configuración, revisa la documentación de Firebase o
 
 ---
 **Fecha:** Julio 2025  
-**Proyecto:** Central de Teleoperadores  
+**Proyecto:** Mistatas - Seguimiento de llamadas  
 **Estado:** Configuración pendiente en Firebase Console

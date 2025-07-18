@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script de Deploy Automático para GitHub Pages
-# Checkpoint y Deploy de la Central de Teleoperadores
+# Checkpoint y Deploy de Mistatas - Seguimiento de llamadas
 
 echo "🚀 Iniciando checkpoint y deploy automático..."
 

@@ -1,5 +1,5 @@
 # Script de Deploy Automático para GitHub Pages (Windows PowerShell)
-# Checkpoint y Deploy de la Central de Teleoperadores
+# Checkpoint y Deploy de Mistatas - Seguimiento de llamadas
 
 Write-Host "🚀 Iniciando checkpoint y deploy automático..." -ForegroundColor Green
 

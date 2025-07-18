@@ -1,7 +1,7 @@
-# Central de Teleoperadores
+# Mistatas - Seguimiento de llamadas
 
 ## 📋 Descripción
-WebApp para el seguimiento y gestión de llamadas de teleasistencia. Sistema completo para la administración de teleoperadores, asignación de beneficiarios y análisis de llamadas.
+Sistema completo para el seguimiento y gestión de llamadas de teleasistencia. Plataforma integral para la administración de teleoperadores, asignación de beneficiarios y análisis de llamadas.
 
 ## ✨ Funcionalidades
 
@@ -93,7 +93,7 @@ src/
 
 ## 👥 Contribución
 
-Central de Teleasistencia © 2025
+Mistatas - Seguimiento de llamadas © 2025
 
 ---
 
