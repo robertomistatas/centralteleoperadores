@@ -1,11 +1,40 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, BarChart3, PieChart, Calendar, AlertCircle, Plus, Edit, Trash2, UserPlus, FileSpreadsheet, Save, X, LogOut, User } from 'lucide-react';
+import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, BarChart3, PieChart, Calendar, AlertCircle, Plus, Edit, Trash2, UserPlus, FileSpreadsheet, Save, X, LogOut, User, Zap, Database } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useAuth } from './AuthContext';
 import { operatorService, assignmentService, callDataService } from './firestoreService';
+import { useCallStore, useAppStore } from './stores';
+import AuditDemo from './components/examples/AuditDemo';
+import ErrorBoundary from './components/ErrorBoundary';
+import ZustandTest from './test/ZustandTest';
 
 const TeleasistenciaApp = () => {
   const { user, logout } = useAuth();
+  
+  // Zustand stores
+  const {
+    callData: zustandCallData,
+    processedData,
+    callMetrics: zustandCallMetrics,
+    setCallData: setZustandCallData,
+    analyzeCallData,
+    getOperatorMetrics,
+    getHourlyDistribution,
+    getFollowUpData,
+    hasData: hasCallData
+  } = useCallStore();
+
+  const {
+    operators: zustandOperators,
+    operatorAssignments: zustandOperatorAssignments,
+    activeTab: zustandActiveTab,
+    setOperators: setZustandOperators,
+    setOperatorAssignments: setZustandOperatorAssignments,
+    setActiveTab: setZustandActiveTab,
+    getAllAssignments: getZustandAllAssignments
+  } = useAppStore();
+
+  // Estados locales (mantenemos algunos para compatibilidad durante la transición)
   const [activeTab, setActiveTab] = useState('dashboard');
   const [callData, setCallData] = useState([]);
   const [assignments, setAssignments] = useState([]);
@@ -396,20 +425,129 @@ const TeleasistenciaApp = () => {
   const processExcelData = async (data) => {
     if (data.length < 2) return;
     
-    const processedData = data.slice(1).map(row => ({
-      id: row[0],
-      date: row[1],
-      beneficiary: row[2],
-      commune: row[3],
-      event: row[4],
-      phone: row[5],
-      startTime: row[6],
-      endTime: row[7],
-      duration: row[8],
-      result: row[9],
-      observation: row[10],
-      apiId: row[11]
-    }));
+    // Función para detectar qué columna contiene los operadores reales
+    const detectOperatorColumn = (data) => {
+      const testRows = data.slice(1, Math.min(6, data.length)); // Analizar las primeras 5 filas de datos
+      
+      // Función auxiliar para determinar si un valor parece ser un nombre de operador
+      const looksLikeOperatorName = (value) => {
+        if (!value || typeof value !== 'string') return false;
+        
+        // Rechazar si es claramente una hora (formato HH:MM)
+        if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(value)) return false;
+        
+        // Rechazar si es claramente una fecha
+        if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(value) || !isNaN(Date.parse(value))) return false;
+        
+        // Rechazar si es solo números
+        if (/^\d+$/.test(value)) return false;
+        
+        // Rechazar si es muy corto (menos de 3 caracteres)
+        if (value.trim().length < 3) return false;
+        
+        // Aceptar si contiene al menos 2 palabras (nombre y apellido)
+        const words = value.trim().split(/\s+/).filter(word => word.length > 1);
+        if (words.length >= 2) return true;
+        
+        // Aceptar si contiene caracteres típicos de nombres
+        if (/^[a-záéíóúüñA-ZÁÉÍÓÚÜÑ\s\-\.]+$/.test(value)) return true;
+        
+        return false;
+      };
+      
+      // Evaluar cada columna para ver cuántos valores parecen nombres de operadores
+      const columnScores = {};
+      
+      for (let colIndex = 0; colIndex < 15; colIndex++) { // Revisar hasta la columna O
+        let score = 0;
+        const values = testRows.map(row => row[colIndex]).filter(v => v != null);
+        
+        if (values.length === 0) continue;
+        
+        for (const value of values) {
+          if (looksLikeOperatorName(String(value))) {
+            score++;
+          }
+        }
+        
+        if (score > 0) {
+          columnScores[colIndex] = {
+            score,
+            percentage: (score / values.length) * 100,
+            sampleValues: values.slice(0, 3)
+          };
+        }
+      }
+      
+      console.log('📊 Análisis de columnas para detectar operadores:', columnScores);
+      
+      // Encontrar la columna con mejor score
+      let bestColumn = 7; // Default: columna H
+      let bestScore = 0;
+      
+      for (const [colIndex, data] of Object.entries(columnScores)) {
+        if (data.score > bestScore || (data.score === bestScore && data.percentage > 50)) {
+          bestScore = data.score;
+          bestColumn = parseInt(colIndex);
+        }
+      }
+      
+      console.log(`🎯 Columna de operadores detectada: ${bestColumn} (puntuación: ${bestScore})`);
+      return bestColumn;
+    };
+    
+    // Detectar automáticamente la columna de operadores
+    const operatorColumn = detectOperatorColumn(data);
+    
+    // Convertir datos de Excel al formato esperado por Zustand
+    const processedData = data.slice(1).map((row, index) => {
+      // Debug: Log de las primeras 3 filas para verificar el mapeo
+      if (index < 3) {
+        console.log(`Fila ${index}:`, {
+          col0: row[0], col1: row[1], col2: row[2], col3: row[3], 
+          col4: row[4], col5: row[5], col6: row[6], col7: row[7], 
+          col8: row[8], col9: row[9], col10: row[10], col11: row[11],
+          operadorDetectado: row[operatorColumn]
+        });
+      }
+      
+      // Obtener el operador de la columna detectada automáticamente
+      let operadorValue = row[operatorColumn];
+      
+      // Validación adicional: si el valor detectado parece ser hora, buscar en otras columnas
+      if (operadorValue && /^\d{1,2}:\d{2}/.test(String(operadorValue))) {
+        console.warn(`⚠️ Valor de operador parece ser hora: "${operadorValue}". Buscando en otras columnas...`);
+        
+        // Buscar en columnas adyacentes
+        for (let i = 0; i < row.length; i++) {
+          const value = row[i];
+          if (value && typeof value === 'string' && 
+              !/^\d{1,2}:\d{2}/.test(value) && 
+              !/^\d+$/.test(value) &&
+              value.trim().split(/\s+/).length >= 2) {
+            operadorValue = value;
+            console.log(`✅ Operador encontrado en columna ${i}: "${operadorValue}"`);
+            break;
+          }
+        }
+      }
+      
+      return {
+        id: row[0] || `call-${index}-${Date.now()}`,
+        fecha: row[1],
+        beneficiario: row[2], // Beneficiario en columna C
+        comuna: row[3],
+        tipo_llamada: row[4] === 'Entrante' ? 'entrante' : 'saliente',
+        numero_cliente: row[5],
+        hora: row[6] || '09:00:00',
+        operador: operadorValue || 'No identificado', // Operador detectado automáticamente
+        duracion: parseInt(row[8]) || 0,
+        categoria: row[9] === 'Llamado exitoso' ? 'exitosa' : 'fallida',
+        resultado: row[9],
+        observacion: row[10],
+        apiId: row[11]
+      };
+    });
 
     // Guardar datos en Firebase
     try {
@@ -423,13 +561,14 @@ const TeleasistenciaApp = () => {
       console.error('Error guardando datos en Firebase:', error);
     }
 
-    setCallData(processedData);
+    // ✅ USAR ZUSTAND COMO FUENTE ÚNICA DE VERDAD
+    setZustandCallData(processedData, 'excel');
     
-    // Analizar datos y actualizar métricas
-    analyzeCallData(processedData);
+    console.log(`📊 Procesados ${processedData.length} registros en Zustand`);
   };
 
-  const analyzeCallData = (data) => {
+  // Renombrar la función de análisis legacy
+  const analyzeCallDataLegacy = (data) => {
     const successfulCalls = data.filter(call => call.result === 'Llamado exitoso');
     const failedCalls = data.filter(call => call.result !== 'Llamado exitoso');
     
@@ -622,6 +761,12 @@ const TeleasistenciaApp = () => {
             active={activeTab === 'history'}
             onClick={() => setActiveTab('history')}
           />
+          <SidebarItem 
+            icon={BarChart3} 
+            label="Auditoría Avanzada" 
+            active={activeTab === 'audit'}
+            onClick={() => setActiveTab('audit')}
+          />
         </nav>
       </div>
       
@@ -756,23 +901,37 @@ const TeleasistenciaApp = () => {
     );
   };
 
-  const Dashboard = () => (
+  const Dashboard = () => {
+    // ✅ USAR MÉTRICAS DE ZUSTAND EN LUGAR DE ESTADO LOCAL
+    const metrics = zustandCallMetrics || {
+      totalCalls: 0,
+      successfulCalls: 0,
+      failedCalls: 0,
+      averageDuration: 0,
+      uniqueBeneficiaries: 0,
+      protocolCompliance: 0
+    };
+
+    const operatorCount = zustandOperators.length;
+    const activeAssignments = zustandOperatorAssignments ? Object.keys(zustandOperatorAssignments).length : 0;
+
+    return (
     <div className="space-y-6">
       {/* Banner de estado de datos */}
       <DataStatusBanner />
       
-      {/* Métricas principales */}
+      {/* Métricas principales basadas en Zustand */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <MetricCard
           title="Llamadas totales"
-          value={dashboardMetrics.totalCalls}
-          subtitle="Cantidad total de llamadas registradas"
+          value={metrics.totalCalls}
+          subtitle="Análisis en tiempo real con Zustand"
           icon={Phone}
           color="blue"
         />
         <MetricCard
           title="Llamadas exitosas"
-          value={dashboardMetrics.successfulCalls}
+          value={metrics.successfulCalls}
           subtitle="Llamadas con resultado exitoso"
           icon={Phone}
           trend={1}
@@ -780,16 +939,16 @@ const TeleasistenciaApp = () => {
         />
         <MetricCard
           title="Llamadas no exitosas"
-          value={dashboardMetrics.failedCalls}
+          value={metrics.failedCalls}
           subtitle="No contestadas, fallidas u otro"
           icon={Phone}
           trend={-1}
           color="red"
         />
         <MetricCard
-          title="Beneficiarios"
-          value={dashboardMetrics.beneficiaries}
-          subtitle="Personas beneficiarias en la base de datos"
+          title="Beneficiarios únicos"
+          value={metrics.uniqueBeneficiaries}
+          subtitle="Personas contactadas únicas"
           icon={Users}
           color="purple"
         />
@@ -799,32 +958,31 @@ const TeleasistenciaApp = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <MetricCard
           title="Asignaciones activas"
-          value={dashboardMetrics.activeAssignments}
+          value={activeAssignments}
           subtitle="Relaciones vigentes beneficiario-teleoperadora"
           icon={Users}
           color="blue"
         />
         <MetricCard
           title="Teleoperadoras"
-          value={dashboardMetrics.operators}
-          subtitle="Cantidad de teleoperadoras registradas"
+          value={operatorCount}
+          subtitle="Operadoras registradas en el sistema"
           icon={Users}
           color="blue"
         />
         <MetricCard
-          title="Cumplimiento protocolo"
-          value={`${dashboardMetrics.protocolCompliance}%`}
-          subtitle="Promedio de cumplimiento en llamadas"
+          title="Cumplimiento de protocolo"
+          value={`${metrics.protocolCompliance}%`}
+          subtitle="Adherencia a procedimientos establecidos"
           icon={BarChart3}
-          color="blue"
+          color="green"
         />
         <MetricCard
-          title="Seguimientos pendientes"
-          value={dashboardMetrics.pendingFollowUps}
-          subtitle="Seguimientos aún no realizados"
+          title="Duración promedio"
+          value={`${Math.round(metrics.averageDuration / 60)}min`}
+          subtitle="Tiempo promedio por llamada"
           icon={Clock}
-          trend={-1}
-          color="red"
+          color="orange"
         />
       </div>
 
@@ -856,7 +1014,7 @@ const TeleasistenciaApp = () => {
         </div>
       </div>
 
-      {/* Detalle por Teleoperadora */}
+      {/* Detalle por Teleoperadora usando datos de Zustand */}
       <div className="bg-white rounded-lg shadow-md p-6">
         <h3 className="text-lg font-semibold mb-4">Detalle por Teleoperadora</h3>
         <div className="overflow-x-auto">
@@ -870,20 +1028,28 @@ const TeleasistenciaApp = () => {
               </tr>
             </thead>
             <tbody>
-              {operatorMetrics.map((metric, index) => (
+              {(getOperatorMetrics && getOperatorMetrics() || []).map((metric, index) => (
                 <tr key={index} className="border-b">
-                  <td className="px-4 py-3 text-sm text-gray-900">{metric.operator}</td>
-                  <td className="px-4 py-3 text-sm text-gray-900">{metric.totalCalls}</td>
-                  <td className="px-4 py-3 text-sm text-gray-900">{Math.round(metric.totalMinutes)} min</td>
-                  <td className="px-4 py-3 text-sm text-gray-900">{Math.round(metric.avgDuration)} min</td>
+                  <td className="px-4 py-3 text-sm text-gray-900">{metric.operador}</td>
+                  <td className="px-4 py-3 text-sm text-gray-900">{metric.totalLlamadas}</td>
+                  <td className="px-4 py-3 text-sm text-gray-900">{Math.round(metric.tiempoTotal / 60)} min</td>
+                  <td className="px-4 py-3 text-sm text-gray-900">{Math.round(metric.promedioLlamada / 60)} min</td>
                 </tr>
               ))}
+              {(!getOperatorMetrics || getOperatorMetrics().length === 0) && (
+                <tr>
+                  <td colSpan="4" className="px-4 py-3 text-sm text-gray-500 text-center">
+                    No hay datos de operadores disponibles. Sube un archivo Excel para ver las métricas.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
       </div>
     </div>
-  );
+    );
+  };
 
   const ModuleCard = ({ title, description, icon: Icon, color, onClick }) => (
     <div className={`bg-${color}-50 rounded-lg p-6 border border-${color}-200`}>
@@ -1314,6 +1480,7 @@ const TeleasistenciaApp = () => {
               {activeTab === 'calls' && 'Registro de Llamadas'}
               {activeTab === 'assignments' && 'Asignaciones'}
               {activeTab === 'history' && 'Historial de Seguimientos'}
+              {activeTab === 'audit' && 'Auditoría Avanzada'}
             </h1>
           </div>
 
@@ -1344,10 +1511,19 @@ const TeleasistenciaApp = () => {
             </div>
           )}
           
-          {activeTab === 'dashboard' && <Dashboard />}
+          {activeTab === 'dashboard' && (
+            <ErrorBoundary>
+              <Dashboard />
+            </ErrorBoundary>
+          )}
           {activeTab === 'calls' && <CallsRegistry />}
           {activeTab === 'assignments' && <Assignments />}
           {activeTab === 'history' && <FollowUpHistory />}
+          {activeTab === 'audit' && (
+            <ErrorBoundary>
+              <AuditDemo />
+            </ErrorBoundary>
+          )}
         </div>
       </div>
     </div>
