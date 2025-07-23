@@ -20,6 +20,8 @@ const useCallStore = create(
         protocolCompliance: 0
       },
       isLoading: false,
+      loadingStage: null, // 'uploading', 'processing', 'analyzing', 'complete'
+      loadingMessage: '',
       lastUpdated: null,
       dataSource: null, // 'excel', 'firebase', 'api'
       filters: {
@@ -36,18 +38,44 @@ const useCallStore = create(
           callData: data,
           dataSource: source,
           lastUpdated: timestamp,
-          isLoading: false
+          isLoading: false,
+          loadingStage: 'complete',
+          loadingMessage: `${data.length} llamadas cargadas exitosamente`
         });
         // Analizar automáticamente los nuevos datos
         get().analyzeCallData();
       },
 
-      setLoading: (loading) => {
-        set({ isLoading: loading });
+      setLoading: (loading, stage = null, message = '') => {
+        set({ 
+          isLoading: loading,
+          loadingStage: stage,
+          loadingMessage: message
+        });
+      },
+
+      setLoadingStage: (stage, message = '') => {
+        const stageMessages = {
+          'uploading': 'Subiendo archivo Excel...',
+          'processing': 'Procesando datos del archivo...',
+          'analyzing': 'Analizando llamadas y generando métricas...',
+          'complete': 'Análisis completado exitosamente',
+          'error': 'Error durante el procesamiento'
+        };
+        
+        set({
+          loadingStage: stage,
+          loadingMessage: message || stageMessages[stage] || '',
+          isLoading: stage !== 'complete' && stage !== 'error'
+        });
       },
 
       analyzeCallData: () => {
         const { callData } = get();
+        
+        // Establecer estado de análisis
+        get().setLoadingStage('analyzing', 'Analizando datos de llamadas...');
+        
         if (!callData || callData.length === 0) {
           set({ 
             processedData: [],
@@ -58,41 +86,51 @@ const useCallStore = create(
               averageDuration: 0,
               uniqueBeneficiaries: 0,
               protocolCompliance: 0
-            }
+            },
+            loadingStage: 'complete',
+            loadingMessage: 'No hay datos para analizar',
+            isLoading: false
           });
           return;
         }
 
-        // Procesar datos para auditoría
-        const processedData = callData.map(call => ({
-          ...call,
-          duracion: parseInt(call.duracion) || 0,
-          isSuccessful: call.categoria === 'exitosa' || call.result === 'Llamado exitoso',
-          fecha: call.fecha ? new Date(call.fecha) : new Date(),
-          hora: call.hora ? parseInt(call.hora.split(':')[0]) : null
-        }));
+        // Simular un pequeño delay para mostrar el estado de análisis
+        setTimeout(() => {
+          // Procesar datos para auditoría (manteniendo formato de fecha original)
+          const processedData = callData.map(call => ({
+            ...call,
+            duracion: parseInt(call.duracion) || 0,
+            isSuccessful: call.categoria === 'exitosa' || call.result === 'Llamado exitoso',
+            // ✅ MANTENER fecha como string en lugar de convertir a Date
+            fecha: call.fecha || 'N/A',
+            hora: call.hora ? parseInt(call.hora.split(':')[0]) : null
+          }));
 
-        // Calcular métricas de auditoría
-        const successfulCalls = processedData.filter(call => call.isSuccessful);
-        const uniqueBeneficiaries = new Set(processedData.map(call => call.beneficiario || call.beneficiary)).size;
-        const totalDuration = processedData.reduce((sum, call) => sum + (call.duracion || 0), 0);
-        const averageDuration = processedData.length > 0 ? Math.round(totalDuration / processedData.length) : 0;
-        const protocolCompliance = processedData.length > 0 ? 
-          Math.round((successfulCalls.length / processedData.length) * 100) : 0;
+          // Calcular métricas de auditoría
+          const successfulCalls = processedData.filter(call => call.isSuccessful);
+          const uniqueBeneficiaries = new Set(processedData.map(call => call.beneficiario || call.beneficiary)).size;
+          const totalDuration = processedData.reduce((sum, call) => sum + (call.duracion || 0), 0);
+          const averageDuration = processedData.length > 0 ? Math.round(totalDuration / processedData.length) : 0;
+          const protocolCompliance = processedData.length > 0 ? 
+            Math.round((successfulCalls.length / processedData.length) * 100) : 0;
 
-        const metrics = {
-          totalCalls: processedData.length,
-          successfulCalls: successfulCalls.length,
-          failedCalls: processedData.length - successfulCalls.length,
-          averageDuration,
-          uniqueBeneficiaries,
-          protocolCompliance
-        };
+          const metrics = {
+            totalCalls: processedData.length,
+            successfulCalls: successfulCalls.length,
+            failedCalls: processedData.length - successfulCalls.length,
+            averageDuration,
+            uniqueBeneficiaries,
+            protocolCompliance
+          };
 
-        set({
-          processedData,
-          callMetrics: metrics
-        });
+          set({
+            processedData,
+            callMetrics: metrics,
+            loadingStage: 'complete',
+            loadingMessage: `Análisis completado: ${processedData.length} llamadas procesadas`,
+            isLoading: false
+          });
+        }, 800); // Delay de 800ms para mostrar el estado
       },
 
       // Filtros y búsquedas
@@ -150,7 +188,10 @@ const useCallStore = create(
             protocolCompliance: 0
           },
           lastUpdated: null,
-          dataSource: null
+          dataSource: null,
+          isLoading: false,
+          loadingStage: null,
+          loadingMessage: ''
         });
       },
 
@@ -324,36 +365,101 @@ const useCallStore = create(
 
       getFollowUpData: (assignments) => {
         const { processedData } = get();
+        if (!processedData || processedData.length === 0) {
+          return [];
+        }
+        
+        // Función auxiliar para formatear fechas al formato chileno DD-MM-YYYY
+        const formatDateSafely = (dateValue) => {
+          if (!dateValue) return 'N/A';
+          
+          try {
+            let date;
+            
+            // Si es string con formato DD-MM-YYYY o DD/MM/YYYY (ya chileno)
+            if (typeof dateValue === 'string' && /^\d{1,2}[-\/]\d{1,2}[-\/]\d{4}$/.test(dateValue)) {
+              const parts = dateValue.split(/[-\/]/);
+              const day = parseInt(parts[0]);
+              const month = parseInt(parts[1]);
+              const year = parseInt(parts[2]);
+              
+              // Verificar que sea formato chileno válido (día <= 31, mes <= 12)
+              if (day <= 31 && month <= 12 && year >= 1900) {
+                return `${day.toString().padStart(2, '0')}-${month.toString().padStart(2, '0')}-${year}`;
+              }
+            }
+            
+            // Si es número (Excel serial date)
+            if (typeof dateValue === 'number') {
+              date = new Date((dateValue - 25569) * 86400 * 1000);
+            } else {
+              date = new Date(dateValue);
+            }
+            
+            // Verificar validez y formatear
+            if (date && !isNaN(date.getTime())) {
+              const day = date.getDate().toString().padStart(2, '0');
+              const month = (date.getMonth() + 1).toString().padStart(2, '0');
+              const year = date.getFullYear();
+              
+              return `${day}-${month}-${year}`;
+            }
+            
+            return 'Fecha inválida';
+          } catch (error) {
+            return typeof dateValue === 'string' ? dateValue : 'Error en fecha';
+          }
+        };
+        
         const beneficiaryStatus = {};
 
         // Analizar estado de cada beneficiario
         processedData.forEach(call => {
-          const beneficiary = call.beneficiary;
+          // Usar los nombres de campos correctos del procesamiento de Excel
+          const beneficiary = call.beneficiario || call.beneficiary;
+          const result = call.resultado || call.result || (call.categoria === 'exitosa' ? 'Llamado exitoso' : 'Llamado fallido');
+          const date = call.fecha || call.date;
+          
+          if (!beneficiary) return; // Skip si no hay beneficiario
+          
           if (!beneficiaryStatus[beneficiary]) {
             beneficiaryStatus[beneficiary] = {
               beneficiary,
               calls: [],
-              lastResult: call.result,
-              lastDate: call.date
+              lastResult: result,
+              lastDate: date
             };
           }
 
           beneficiaryStatus[beneficiary].calls.push(call);
 
           // Mantener la llamada más reciente
-          if (new Date(call.date) > new Date(beneficiaryStatus[beneficiary].lastDate)) {
-            beneficiaryStatus[beneficiary].lastResult = call.result;
-            beneficiaryStatus[beneficiary].lastDate = call.date;
+          const currentDate = new Date(date);
+          const lastDate = new Date(beneficiaryStatus[beneficiary].lastDate);
+          
+          if (!isNaN(currentDate.getTime()) && (isNaN(lastDate.getTime()) || currentDate > lastDate)) {
+            beneficiaryStatus[beneficiary].lastResult = result;
+            beneficiaryStatus[beneficiary].lastDate = date;
           }
         });
 
         // Generar datos de seguimiento
         return Object.values(beneficiaryStatus).map(item => {
-          const assignment = assignments.find(a => a.beneficiary === item.beneficiary);
+          // Buscar asignación de manera más robusta
+          let assignment = null;
+          
+          if (assignments && Array.isArray(assignments)) {
+            // Buscar por diferentes campos posibles
+            assignment = assignments.find(a => {
+              const assignmentBeneficiary = a.beneficiary || a.beneficiario;
+              return assignmentBeneficiary === item.beneficiary;
+            });
+          }
+          
           let status = 'pendiente';
           let colorClass = 'bg-yellow-100 text-yellow-800';
 
-          if (item.lastResult === 'Llamado exitoso') {
+          if (item.lastResult === 'Llamado exitoso' || item.lastResult === 'exitosa') {
             status = 'al-dia';
             colorClass = 'bg-green-100 text-green-800';
           } else if (item.calls.length > 3) {
@@ -361,17 +467,82 @@ const useCallStore = create(
             colorClass = 'bg-red-100 text-red-800';
           }
 
-          return {
+          // Obtener información de la operadora PRIORIZANDO las asignaciones
+          let operatorName = 'Sin asignar';
+          let phone = 'N/A';
+          let commune = 'N/A';
+          
+          if (assignment) {
+            // Prioridad 1: Obtener de las asignaciones (fuente confiable)
+            const candidateOperator = assignment.operator || 
+                                    assignment.operador || 
+                                    assignment.operatorName ||
+                                    assignment.teleoperadora ||
+                                    assignment.name;
+            
+            // Validar que el operador sea válido
+            if (candidateOperator && 
+                candidateOperator !== 'Solo HANGUP' && 
+                candidateOperator !== 'HANGUP' &&
+                candidateOperator !== 'No identificado' &&
+                candidateOperator.trim().length > 2 &&
+                !/^\d{1,2}[-\/]\d{1,2}[-\/]\d{4}$/.test(candidateOperator)) {
+              operatorName = candidateOperator;
+            }
+            
+            // Probar diferentes campos para el teléfono
+            phone = assignment.phone || 
+                   assignment.telefono || 
+                   assignment.primaryPhone ||
+                   assignment.numero_cliente || 
+                   'N/A';
+            
+            // Probar diferentes campos para la comuna
+            commune = assignment.commune || 
+                     assignment.comuna || 
+                     'N/A';
+          } 
+          
+          // Prioridad 2: Solo si no hay operador válido desde asignación
+          if (operatorName === 'Sin asignar') {
+            const callWithOperator = item.calls.find(call => {
+              const operador = call.operador || call.operator || call.teleoperadora;
+              // Validación mejorada de operadores
+              return operador && 
+                     operador !== 'No identificado' && 
+                     operador !== 'Solo HANGUP' &&
+                     operador !== 'HANGUP' &&
+                     operador !== item.beneficiary &&
+                     operador.trim().length > 2 &&
+                     !/^\d{1,2}:\d{2}/.test(operador) &&
+                     !/^\d+$/.test(operador) &&
+                     !/^\d{1,2}[-\/]\d{1,2}[-\/]\d{4}$/.test(operador) &&
+                     !/^(si|no|exitoso|fallido|pendiente)$/i.test(operador) &&
+                     /^[a-záéíóúüñA-ZÁÉÍÓÚÜÑ\s\-\.]{3,}$/.test(operador);
+            });
+            
+            if (callWithOperator) {
+              const detectedOperator = callWithOperator.operador || 
+                                     callWithOperator.operator || 
+                                     callWithOperator.teleoperadora;
+              
+              operatorName = detectedOperator;
+            }
+          }
+
+          const result = {
             id: item.beneficiary,
-            operator: assignment ? assignment.operator : 'Sin asignar',
+            operator: operatorName,
             beneficiary: item.beneficiary,
-            phone: assignment ? assignment.phone : 'N/A',
-            commune: assignment ? assignment.commune : 'N/A',
+            phone: phone,
+            commune: commune,
             status,
-            lastCall: item.lastDate,
+            lastCall: formatDateSafely(item.lastDate),
             callCount: item.calls.length,
             colorClass
           };
+          
+          return result;
         });
       },
 
@@ -409,7 +580,9 @@ const useCallStore = create(
         callMetrics: state.callMetrics,
         lastUpdated: state.lastUpdated,
         dataSource: state.dataSource,
-        filters: state.filters
+        filters: state.filters,
+        loadingStage: state.loadingStage,
+        loadingMessage: state.loadingMessage
       })
     }
   )

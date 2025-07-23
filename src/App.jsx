@@ -11,6 +11,48 @@ import ZustandTest from './test/ZustandTest';
 const TeleasistenciaApp = () => {
   const { user, logout } = useAuth();
   
+  // ✅ FUNCIÓN UTILITARIA CENTRALIZADA: Formatear fechas al formato chileno DD-MM-YYYY
+  const formatToChileanDate = (dateValue) => {
+    if (!dateValue) return 'N/A';
+    
+    try {
+      let date;
+      
+      // Si es string con formato DD-MM-YYYY o DD/MM/YYYY (ya chileno)
+      if (typeof dateValue === 'string' && /^\d{1,2}[-\/]\d{1,2}[-\/]\d{4}$/.test(dateValue)) {
+        const parts = dateValue.split(/[-\/]/);
+        const day = parseInt(parts[0]);
+        const month = parseInt(parts[1]);
+        const year = parseInt(parts[2]);
+        
+        // Verificar que sea formato chileno válido (día <= 31, mes <= 12)
+        if (day <= 31 && month <= 12 && year >= 1900) {
+          return `${day.toString().padStart(2, '0')}-${month.toString().padStart(2, '0')}-${year}`;
+        }
+      }
+      
+      // Si es número (Excel serial date)
+      if (typeof dateValue === 'number') {
+        date = new Date((dateValue - 25569) * 86400 * 1000);
+      } else {
+        date = new Date(dateValue);
+      }
+      
+      // Verificar validez y formatear
+      if (date && !isNaN(date.getTime())) {
+        const day = date.getDate().toString().padStart(2, '0');
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        const year = date.getFullYear();
+        
+        return `${day}-${month}-${year}`;
+      }
+      
+      return 'Fecha inválida';
+    } catch (error) {
+      return typeof dateValue === 'string' ? dateValue : 'Error en fecha';
+    }
+  };
+  
   // Zustand stores
   const {
     callData: zustandCallData,
@@ -21,7 +63,11 @@ const TeleasistenciaApp = () => {
     getOperatorMetrics,
     getHourlyDistribution,
     getFollowUpData,
-    hasData: hasCallData
+    hasData: hasCallData,
+    isLoading,
+    loadingStage,
+    loadingMessage,
+    setLoadingStage
   } = useCallStore();
 
   const {
@@ -38,7 +84,7 @@ const TeleasistenciaApp = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [callData, setCallData] = useState([]);
   const [assignments, setAssignments] = useState([]);
-  const [followUpHistory, setFollowUpHistory] = useState([]);
+  // ✅ ELIMINADO: followUpHistory - ahora usamos solo datos de Zustand con formateo correcto de fechas
   const [firebaseStatus, setFirebaseStatus] = useState('connecting'); // 'connecting', 'connected', 'demo'
   const [dashboardMetrics, setDashboardMetrics] = useState({
     totalCalls: 0,
@@ -170,6 +216,48 @@ const TeleasistenciaApp = () => {
   const initializeWithSampleData = () => {
     console.log('🔄 Inicializando con datos de ejemplo...');
     setAssignments(sampleAssignments);
+    
+    // ✅ SINCRONIZAR asignaciones de muestra con Zustand
+    // Crear estructura de operadorAssignments para Zustand basada en sampleAssignments
+    const operatorAssignmentsForZustand = {};
+    
+    sampleAssignments.forEach(assignment => {
+      // Buscar o crear operador ID basado en el nombre
+      const operatorName = assignment.operator;
+      let operatorId = `operator-${operatorName.toLowerCase().replace(/\s+/g, '-')}`;
+      
+      if (!operatorAssignmentsForZustand[operatorId]) {
+        operatorAssignmentsForZustand[operatorId] = [];
+      }
+      
+      operatorAssignmentsForZustand[operatorId].push({
+        id: assignment.id,
+        beneficiary: assignment.beneficiary,
+        beneficiario: assignment.beneficiary, // Agregar campo alternativo
+        primaryPhone: assignment.phone,
+        phone: assignment.phone, // Agregar campo alternativo
+        commune: assignment.commune,
+        comuna: assignment.commune // Agregar campo alternativo
+      });
+    });
+    
+    // Crear operadores para Zustand basado en sampleAssignments
+    const operatorsForZustand = [...new Set(sampleAssignments.map(a => a.operator))].map((operatorName, index) => ({
+      id: `operator-${operatorName.toLowerCase().replace(/\s+/g, '-')}`,
+      name: operatorName,
+      email: `${operatorName.toLowerCase().replace(/\s+/g, '.')}@example.com`,
+      phone: `+56${index + 1}12345678`
+    }));
+    
+    // Sincronizar con Zustand
+    setZustandOperators(operatorsForZustand);
+    setZustandOperatorAssignments(operatorAssignmentsForZustand);
+    
+    console.log('✅ Datos sincronizados con Zustand:', {
+      operators: operatorsForZustand,
+      assignments: operatorAssignmentsForZustand
+    });
+    
     initializeOperators();
     generateSampleData();
     console.log('✅ Datos de ejemplo inicializados');
@@ -393,40 +481,59 @@ const TeleasistenciaApp = () => {
     };
     
     const assignmentsToUse = assignments.length > 0 ? assignments : sampleAssignments;
-    const sampleFollowUps = assignmentsToUse.map(assignment => ({
-      ...assignment,
-      status: statuses[Math.floor(Math.random() * statuses.length)],
-      lastCall: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toLocaleDateString(),
-      callCount: Math.floor(Math.random() * 10) + 1,
-      colorClass: statusColors[statuses[Math.floor(Math.random() * statuses.length)]]
-    }));
-
-    setFollowUpHistory(sampleFollowUps);
+    // ✅ ELIMINADO: La generación de sampleFollowUps ya no es necesaria
+    // Los datos de seguimiento se obtienen directamente de Zustand con formateo correcto
   };
 
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
     if (file) {
+      // Establecer estado inicial de carga
+      setLoadingStage('uploading', `Subiendo archivo: ${file.name}`);
+      
       const reader = new FileReader();
       reader.onload = (e) => {
-        const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, { type: 'array' });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-        
-        // Procesar datos del Excel
-        processExcelData(jsonData);
+        try {
+          // Establecer estado de procesamiento
+          setLoadingStage('processing', 'Leyendo datos del archivo Excel...');
+          
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+          
+          // Procesar datos del Excel
+          processExcelData(jsonData);
+        } catch (error) {
+          console.error('Error al procesar archivo Excel:', error);
+          setLoadingStage('error', 'Error al procesar el archivo Excel');
+        }
       };
+      
+      reader.onerror = () => {
+        setLoadingStage('error', 'Error al leer el archivo');
+      };
+      
       reader.readAsArrayBuffer(file);
     }
+    
+    // Limpiar el input para permitir cargar el mismo archivo nuevamente
+    event.target.value = '';
   };
 
   const processExcelData = async (data) => {
-    if (data.length < 2) return;
+    if (data.length < 2) {
+      setLoadingStage('error', 'El archivo Excel no contiene datos válidos');
+      return;
+    }
     
-    // Función para detectar qué columna contiene los operadores reales
-    const detectOperatorColumn = (data) => {
+    try {
+      // Actualizar estado de procesamiento
+      setLoadingStage('processing', `Procesando ${data.length - 1} filas de datos...`);
+      
+      // Función para detectar qué columna contiene los operadores reales
+      const detectOperatorColumn = (data) => {
       const testRows = data.slice(1, Math.min(6, data.length)); // Analizar las primeras 5 filas de datos
       
       // Función auxiliar para determinar si un valor parece ser un nombre de operador
@@ -532,9 +639,12 @@ const TeleasistenciaApp = () => {
         }
       }
       
+      // Usar la función centralizada para formatear fechas
+      const formatDateFromExcel = formatToChileanDate;
+      
       return {
         id: row[0] || `call-${index}-${Date.now()}`,
-        fecha: row[1],
+        fecha: formatDateFromExcel(row[1]), // ✅ CORREGIDO: Formatear fecha de forma consistente
         beneficiario: row[2], // Beneficiario en columna C
         comuna: row[3],
         tipo_llamada: row[4] === 'Entrante' ? 'entrante' : 'saliente',
@@ -564,7 +674,98 @@ const TeleasistenciaApp = () => {
     // ✅ USAR ZUSTAND COMO FUENTE ÚNICA DE VERDAD
     setZustandCallData(processedData, 'excel');
     
+    // ✅ SINCRONIZAR operadoras detectadas con asignaciones si no hay asignaciones previas
+    if (allAssignments.length === 0 && processedData.length > 0) {
+      console.log('🔄 No hay asignaciones previas, creando asignaciones basadas en operadoras detectadas...');
+      createAssignmentsFromCallData(processedData);
+    }
+    
     console.log(`📊 Procesados ${processedData.length} registros en Zustand`);
+    } catch (error) {
+      console.error('Error durante el procesamiento de datos:', error);
+      setLoadingStage('error', 'Error al procesar los datos del Excel');
+    }
+  };
+
+  // Crear asignaciones automáticas basadas en datos de llamadas cuando no hay asignaciones previas
+  const createAssignmentsFromCallData = (callData) => {
+    try {
+      const operatorBeneficiaryMap = {};
+      
+      // Función para validar nombres de operadoras
+      const isValidOperatorName = (name) => {
+        if (!name || typeof name !== 'string') return false;
+        return name.trim().length > 2 &&
+               !/^\d{1,2}:\d{2}/.test(name) &&
+               !/^\d+$/.test(name) &&
+               !/^(si|no|exitoso|fallido|pendiente|hangup|solo)$/i.test(name) &&
+               /^[a-záéíóúüñA-ZÁÉÍÓÚÜÑ\s\-\.]{3,}$/.test(name);
+      };
+      
+      // Analizar llamadas para extraer relaciones operadora-beneficiario
+      callData.forEach(call => {
+        const beneficiary = call.beneficiario || call.beneficiary;
+        const operatorName = call.operador || call.operator || call.teleoperadora;
+        
+        if (beneficiary && operatorName && isValidOperatorName(operatorName)) {
+          if (!operatorBeneficiaryMap[operatorName]) {
+            operatorBeneficiaryMap[operatorName] = new Set();
+          }
+          operatorBeneficiaryMap[operatorName].add(beneficiary);
+        }
+      });
+      
+      // Crear operadores únicos
+      const detectedOperators = Object.keys(operatorBeneficiaryMap).map((operatorName, index) => ({
+        id: `auto-operator-${index + 1}`,
+        name: operatorName,
+        email: `${operatorName.toLowerCase().replace(/\s+/g, '.')}@auto.com`,
+        phone: `+56${index + 1}87654321`
+      }));
+      
+      // Crear asignaciones automáticas
+      const autoAssignments = {};
+      const allAssignmentsList = [];
+      
+      Object.entries(operatorBeneficiaryMap).forEach(([operatorName, beneficiariesSet], operatorIndex) => {
+        const operatorId = `auto-operator-${operatorIndex + 1}`;
+        autoAssignments[operatorId] = [];
+        
+        Array.from(beneficiariesSet).forEach((beneficiary, beneficiaryIndex) => {
+          const assignment = {
+            id: `auto-${operatorId}-${beneficiaryIndex + 1}`,
+            beneficiary: beneficiary,
+            beneficiario: beneficiary,
+            primaryPhone: 'N/A',
+            phone: 'N/A',
+            commune: 'N/A',
+            comuna: 'N/A'
+          };
+          
+          autoAssignments[operatorId].push(assignment);
+          allAssignmentsList.push({
+            ...assignment,
+            operator: operatorName
+          });
+        });
+      });
+      
+      // Sincronizar con Zustand y estado local
+      if (detectedOperators.length > 0) {
+        setZustandOperators(detectedOperators);
+        setZustandOperatorAssignments(autoAssignments);
+        setAssignments(allAssignmentsList);
+        
+        console.log('✅ Asignaciones automáticas creadas:', {
+          operators: detectedOperators.length,
+          assignments: allAssignmentsList.length,
+          operatorMap: operatorBeneficiaryMap
+        });
+      }
+      
+    } catch (error) {
+      console.error('Error creando asignaciones automáticas:', error);
+    }
   };
 
   // Renombrar la función de análisis legacy
@@ -621,68 +822,15 @@ const TeleasistenciaApp = () => {
 
     setOperatorMetrics(Object.values(operatorAnalysis));
     
-    // Generar historial de seguimientos basado en datos reales
-    generateFollowUpHistory(data);
+    // ✅ ELIMINADO: generateFollowUpHistory - ahora usamos datos de Zustand con formateo correcto
+    // Los datos de seguimiento se obtienen directamente de getFollowUpData
     
     // Generar distribución horaria
     generateHourlyDistribution(data);
   };
 
-  // Generar historial de seguimientos basado en datos reales
-  const generateFollowUpHistory = (callData) => {
-    const beneficiaryStatus = {};
-    
-    // Analizar cada beneficiario y determinar su estado
-    callData.forEach(call => {
-      const beneficiary = call.beneficiary;
-      if (!beneficiaryStatus[beneficiary]) {
-        beneficiaryStatus[beneficiary] = {
-          beneficiary,
-          calls: [],
-          lastResult: call.result,
-          lastDate: call.date
-        };
-      }
-      
-      beneficiaryStatus[beneficiary].calls.push(call);
-      
-      // Mantener la llamada más reciente
-      if (new Date(call.date) > new Date(beneficiaryStatus[beneficiary].lastDate)) {
-        beneficiaryStatus[beneficiary].lastResult = call.result;
-        beneficiaryStatus[beneficiary].lastDate = call.date;
-      }
-    });
-    
-    // Generar historial con estado real
-    const followUps = Object.values(beneficiaryStatus).map(item => {
-      const assignment = assignments.find(a => a.beneficiary === item.beneficiary);
-      let status = 'pendiente';
-      let colorClass = 'bg-yellow-100 text-yellow-800';
-      
-      // Determinar estado basado en el resultado de la última llamada
-      if (item.lastResult === 'Llamado exitoso') {
-        status = 'al-dia';
-        colorClass = 'bg-green-100 text-green-800';
-      } else if (item.calls.length > 3) {
-        status = 'urgente';
-        colorClass = 'bg-red-100 text-red-800';
-      }
-      
-      return {
-        id: item.beneficiary,
-        operator: assignment ? assignment.operator : 'Sin asignar',
-        beneficiary: item.beneficiary,
-        phone: assignment ? assignment.phone : 'N/A',
-        commune: assignment ? assignment.commune : 'N/A',
-        status,
-        lastCall: item.lastDate,
-        callCount: item.calls.length,
-        colorClass
-      };
-    });
-    
-    setFollowUpHistory(followUps);
-  };
+  // ✅ ELIMINADO: generateFollowUpHistory ahora usa datos de Zustand directamente
+  // La función getFollowUpData en Zustand ya maneja el formateo de fechas correctamente
 
   // Generar distribución horaria basada en datos reales
   const generateHourlyDistribution = (callData) => {
@@ -703,7 +851,18 @@ const TeleasistenciaApp = () => {
     setHourlyDistribution(hourlyData);
   };
 
-  const filteredFollowUps = followUpHistory.filter(item => {
+  // ✅ USAR ZUSTAND: Obtener datos de seguimiento desde Zustand
+  const allAssignments = getZustandAllAssignments(); // Obtener todas las asignaciones como array plano
+  
+  // Agregar fallback a asignaciones locales si Zustand está vacío
+  const assignmentsToUse = allAssignments && allAssignments.length > 0 ? 
+    allAssignments : 
+    (assignments && assignments.length > 0 ? assignments : []);
+  
+  const followUpData = getFollowUpData(assignmentsToUse);
+  
+  // Filtros para historial de seguimientos
+  const filteredFollowUps = followUpData.filter(item => {
     const matchesFilter = filterStatus === 'all' || item.status === filterStatus;
     const matchesSearch = item.beneficiary.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          item.operator.toLowerCase().includes(searchTerm.toLowerCase());
@@ -1092,46 +1251,178 @@ const TeleasistenciaApp = () => {
             Formatos soportados: .xlsx, .xls
           </p>
         </div>
+        
+        {/* Estado de Carga */}
+        {isLoading && (
+          <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center space-x-3">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+              <div>
+                <h4 className="text-sm font-medium text-blue-900">
+                  {loadingStage === 'uploading' && '📤 Subiendo archivo...'}
+                  {loadingStage === 'processing' && '⚙️ Procesando datos...'}
+                  {loadingStage === 'analyzing' && '📊 Analizando llamadas...'}
+                </h4>
+                <p className="text-sm text-blue-700">
+                  {loadingMessage}
+                </p>
+              </div>
+            </div>
+            
+            {/* Barra de progreso visual */}
+            <div className="mt-3 w-full bg-blue-200 rounded-full h-2">
+              <div 
+                className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                style={{
+                  width: loadingStage === 'uploading' ? '25%' : 
+                         loadingStage === 'processing' ? '50%' : 
+                         loadingStage === 'analyzing' ? '75%' : '100%'
+                }}
+              ></div>
+            </div>
+          </div>
+        )}
+        
+        {/* Estado de Éxito */}
+        {loadingStage === 'complete' && !isLoading && zustandCallData.length > 0 && (
+          <div className="mt-6 bg-green-50 border border-green-200 rounded-lg p-4">
+            <div className="flex items-center space-x-3">
+              <div className="flex-shrink-0">
+                <div className="w-6 h-6 bg-green-600 rounded-full flex items-center justify-center">
+                  <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+              <div>
+                <h4 className="text-sm font-medium text-green-900">
+                  ✅ Análisis completado exitosamente
+                </h4>
+                <p className="text-sm text-green-700">
+                  {loadingMessage}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Estado de Error */}
+        {loadingStage === 'error' && !isLoading && (
+          <div className="mt-6 bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-center space-x-3">
+              <div className="flex-shrink-0">
+                <div className="w-6 h-6 bg-red-600 rounded-full flex items-center justify-center">
+                  <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+              <div>
+                <h4 className="text-sm font-medium text-red-900">
+                  ❌ Error en el procesamiento
+                </h4>
+                <p className="text-sm text-red-700">
+                  {loadingMessage}
+                </p>
+                <p className="text-xs text-red-600 mt-1">
+                  Por favor, verifica el formato del archivo e intenta nuevamente.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      {callData.length > 0 && (
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <h3 className="text-lg font-semibold mb-4">Datos Procesados</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">ID</th>
-                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Fecha</th>
-                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Beneficiario</th>
-                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Evento</th>
-                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Resultado</th>
-                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Duración</th>
-                </tr>
-              </thead>
-              <tbody>
-                {callData.slice(0, 10).map((call, index) => (
-                  <tr key={index} className="border-b">
-                    <td className="px-4 py-3 text-sm text-gray-900">{call.id}</td>
-                    <td className="px-4 py-3 text-sm text-gray-900">{call.date}</td>
-                    <td className="px-4 py-3 text-sm text-gray-900">{call.beneficiary}</td>
-                    <td className="px-4 py-3 text-sm text-gray-900">{call.event}</td>
-                    <td className="px-4 py-3 text-sm text-gray-900">
-                      <span className={`px-2 py-1 rounded-full text-xs ${
-                        call.result === 'Llamado exitoso' 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {call.result}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-900">{call.duration}s</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {zustandCallData.length > 0 && (
+        <>
+          {/* Resumen de datos procesados */}
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h3 className="text-lg font-semibold mb-4">Resumen del Análisis</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="text-center">
+                <div className="text-2xl font-bold text-blue-600">{zustandCallData.length}</div>
+                <div className="text-sm text-gray-600">Total Llamadas</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-green-600">
+                  {zustandCallData.filter(call => call.categoria === 'exitosa' || call.resultado === 'Llamado exitoso').length}
+                </div>
+                <div className="text-sm text-gray-600">Exitosas</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-red-600">
+                  {zustandCallData.filter(call => call.categoria !== 'exitosa' && call.resultado !== 'Llamado exitoso').length}
+                </div>
+                <div className="text-sm text-gray-600">Fallidas</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-purple-600">
+                  {new Set(zustandCallData.map(call => call.beneficiario).filter(Boolean)).size}
+                </div>
+                <div className="text-sm text-gray-600">Beneficiarios</div>
+              </div>
+            </div>
           </div>
-        </div>
+          
+          {/* Tabla de datos */}
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h3 className="text-lg font-semibold mb-4">Datos Procesados</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">ID</th>
+                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Fecha</th>
+                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Beneficiario</th>
+                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Comuna</th>
+                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Operador</th>
+                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Tipo</th>
+                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Resultado</th>
+                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Duración</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {zustandCallData.slice(0, 10).map((call, index) => (
+                    <tr key={call.id || index} className="border-b hover:bg-gray-50">
+                      <td className="px-4 py-3 text-sm text-gray-900">{call.id || `call-${index}`}</td>
+                      <td className="px-4 py-3 text-sm text-gray-900">{call.fecha || 'N/A'}</td>
+                      <td className="px-4 py-3 text-sm text-gray-900 font-medium">{call.beneficiario || 'N/A'}</td>
+                      <td className="px-4 py-3 text-sm text-gray-900">{call.comuna || 'N/A'}</td>
+                      <td className="px-4 py-3 text-sm text-gray-900">{call.operador || 'No identificado'}</td>
+                      <td className="px-4 py-3 text-sm text-gray-900">
+                        <span className={`px-2 py-1 rounded-full text-xs ${
+                          call.tipo_llamada === 'entrante' 
+                            ? 'bg-blue-100 text-blue-800' 
+                            : 'bg-purple-100 text-purple-800'
+                        }`}>
+                          {call.tipo_llamada === 'entrante' ? 'Entrante' : 'Saliente'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-900">
+                        <span className={`px-2 py-1 rounded-full text-xs ${
+                          call.resultado === 'Llamado exitoso' || call.categoria === 'exitosa'
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {call.resultado || (call.categoria === 'exitosa' ? 'Exitoso' : 'Fallido')}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-900">{call.duracion || 0}s</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              
+              {/* Mostrar información adicional */}
+              <div className="mt-4 flex justify-between items-center text-sm text-gray-600">
+                <span>Mostrando {Math.min(10, zustandCallData.length)} de {zustandCallData.length} llamadas procesadas</span>
+                {zustandCallData.length > 10 && (
+                  <span className="text-blue-600">Mostrando solo las primeras 10 filas</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
@@ -1429,7 +1720,28 @@ const TeleasistenciaApp = () => {
 
         {/* Tarjetas de seguimiento */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredFollowUps.map((item) => (
+          {filteredFollowUps.length === 0 ? (
+            <div className="col-span-full bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+              <div className="flex flex-col items-center">
+                <FileSpreadsheet className="w-12 h-12 text-gray-400 mb-4" />
+                <h4 className="text-lg font-medium text-gray-900 mb-2">
+                  No hay datos de seguimiento
+                </h4>
+                <p className="text-gray-600 mb-4 max-w-md">
+                  {!hasCallData ? 
+                    'Para ver el historial de seguimientos, sube un archivo Excel con datos de llamadas desde el Panel Principal.' :
+                    'No se encontraron seguimientos que coincidan con los filtros aplicados.'
+                  }
+                </p>
+                {!hasCallData && (
+                  <div className="text-sm text-gray-500">
+                    💡 Ve al <strong>Panel Principal</strong> → <strong>Cargar Excel</strong> para comenzar
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            filteredFollowUps.map((item) => (
             <div key={item.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
               <div className="flex items-start justify-between mb-2">
                 <h4 className="font-medium text-gray-900">{item.beneficiary}</h4>
@@ -1463,7 +1775,7 @@ const TeleasistenciaApp = () => {
                 </div>
               )}
             </div>
-          ))}
+          )))}
         </div>
       </div>
     </div>
