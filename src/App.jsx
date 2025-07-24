@@ -108,6 +108,11 @@ const TeleasistenciaApp = () => {
   const [operatorForm, setOperatorForm] = useState({ name: '', email: '', phone: '' });
   const [operatorAssignments, setOperatorAssignments] = useState({});
   const [uploadingFor, setUploadingFor] = useState(null);
+  
+  // Estados para búsqueda de beneficiarios
+  const [showBeneficiarySearch, setShowBeneficiarySearch] = useState(false);
+  const [beneficiarySearchTerm, setBeneficiarySearchTerm] = useState('');
+  const [beneficiarySearchResults, setBeneficiarySearchResults] = useState([]);
 
   // Datos de ejemplo para las asignaciones
   const sampleAssignments = [
@@ -485,6 +490,121 @@ const TeleasistenciaApp = () => {
     // Los datos de seguimiento se obtienen directamente de Zustand con formateo correcto
   };
 
+  // Función para buscar beneficiarios en las asignaciones
+  const searchBeneficiaries = (searchTerm) => {
+    if (!searchTerm.trim()) {
+      setBeneficiarySearchResults([]);
+      return;
+    }
+
+    console.log('🔍 Iniciando búsqueda para:', searchTerm);
+    const allAssignments = [];
+    
+    // 1. Buscar en asignaciones locales (operatorAssignments) - FUENTE PRINCIPAL
+    Object.entries(operatorAssignments).forEach(([operatorId, assignments]) => {
+      const operator = operators.find(op => op.id === operatorId);
+      if (assignments && Array.isArray(assignments)) {
+        assignments.forEach(assignment => {
+          // Crear una entrada unificada con todos los campos posibles
+          allAssignments.push({
+            // Campos de beneficiario
+            beneficiary: assignment.beneficiary || assignment.beneficiario,
+            beneficiario: assignment.beneficiary || assignment.beneficiario,
+            
+            // Campos de operador
+            operatorName: operator?.name || assignment.operator || assignment.operatorName || 'Operador no encontrado',
+            operator: operator?.name || assignment.operator || assignment.operatorName,
+            
+            // Campos de teléfono (múltiples opciones)
+            phone: assignment.primaryPhone || assignment.phone || assignment.telefono || assignment.numero_cliente || 
+                   (assignment.phones && assignment.phones[0]) || 'N/A',
+            primaryPhone: assignment.primaryPhone,
+            phones: assignment.phones || [],
+            telefono: assignment.telefono,
+            numero_cliente: assignment.numero_cliente,
+            
+            // Comuna
+            commune: assignment.commune || assignment.comuna || 'N/A',
+            comuna: assignment.comuna,
+            
+            // Metadatos
+            operatorId: operatorId,
+            source: 'operatorAssignments',
+            id: assignment.id
+          });
+        });
+      }
+    });
+    
+    // 2. Buscar en datos de Zustand como respaldo
+    const zustandAssignments = getZustandAllAssignments();
+    console.log('📊 Asignaciones de Zustand:', zustandAssignments);
+    zustandAssignments.forEach(assignment => {
+      allAssignments.push({
+        beneficiary: assignment.beneficiary || assignment.beneficiario,
+        beneficiario: assignment.beneficiary || assignment.beneficiario,
+        operatorName: assignment.operator || assignment.operatorName || assignment.name || 'Sin asignar',
+        operator: assignment.operator || assignment.operatorName || assignment.name,
+        phone: assignment.phone || assignment.telefono || assignment.numero_cliente || 'N/A',
+        commune: assignment.commune || assignment.comuna || 'N/A',
+        operatorId: assignment.operatorId || 'zustand',
+        source: 'zustand'
+      });
+    });
+
+    console.log('📋 Total asignaciones encontradas:', allAssignments.length);
+    console.log('📋 Muestra de asignaciones:', allAssignments.slice(0, 3));
+    
+    // Filtrar por término de búsqueda (búsqueda muy flexible)
+    const searchLower = searchTerm.toLowerCase().trim();
+    const filteredResults = allAssignments.filter(assignment => {
+      // Obtener todos los campos de texto para búsqueda
+      const beneficiaryName = (assignment.beneficiary || assignment.beneficiario || '').toLowerCase();
+      const operatorName = (assignment.operatorName || assignment.operator || '').toLowerCase();
+      const commune = (assignment.commune || assignment.comuna || '').toLowerCase();
+      
+      // Buscar en todos los teléfonos posibles
+      const allPhones = [
+        assignment.phone,
+        assignment.primaryPhone,
+        assignment.telefono,
+        assignment.numero_cliente,
+        ...(assignment.phones || [])
+      ].filter(phone => phone && phone !== 'N/A').join(' ').toLowerCase();
+      
+      // Verificar coincidencias
+      const matchesBeneficiary = beneficiaryName.includes(searchLower);
+      const matchesOperator = operatorName.includes(searchLower);
+      const matchesPhone = allPhones.includes(searchLower);
+      const matchesCommune = commune.includes(searchLower);
+      
+      const hasMatch = matchesBeneficiary || matchesOperator || matchesPhone || matchesCommune;
+      
+      if (hasMatch) {
+        console.log('✅ Coincidencia encontrada:', {
+          beneficiary: beneficiaryName,
+          operator: operatorName,
+          phones: allPhones,
+          commune: commune,
+          searchTerm: searchLower,
+          matches: { beneficiaryName: matchesBeneficiary, operatorName: matchesOperator, phones: matchesPhone, commune: matchesCommune },
+          source: assignment.source
+        });
+      }
+      
+      return hasMatch;
+    });
+    
+    console.log('🎯 Resultados filtrados:', filteredResults.length);
+    setBeneficiarySearchResults(filteredResults);
+  };
+
+  // Manejar cambio en el término de búsqueda
+  const handleBeneficiarySearch = (term) => {
+    setBeneficiarySearchTerm(term);
+    searchBeneficiaries(term);
+  };
+
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
     if (file) {
@@ -851,15 +971,65 @@ const TeleasistenciaApp = () => {
     setHourlyDistribution(hourlyData);
   };
 
-  // ✅ USAR ZUSTAND: Obtener datos de seguimiento desde Zustand
-  const allAssignments = getZustandAllAssignments(); // Obtener todas las asignaciones como array plano
+  // 🔧 CORRECCIÓN: Usar operatorAssignments directamente en lugar de Zustand
+  // Crear array de asignaciones desde operatorAssignments local (fuente de verdad)
+  const createAssignmentsFromLocal = () => {
+    const localAssignments = [];
+    
+    console.log('🔍 App.jsx - operatorAssignments (fuente de verdad):', operatorAssignments);
+    console.log('🔍 App.jsx - operators disponibles:', operators);
+    
+    Object.entries(operatorAssignments).forEach(([operatorId, assignments]) => {
+      const operator = operators.find(op => op.id === operatorId);
+      if (operator && assignments && Array.isArray(assignments)) {
+        console.log(`� Procesando asignaciones para ${operator.name}:`, assignments.length);
+        assignments.forEach(assignment => {
+          const assignmentData = {
+            id: assignment.id,
+            operator: operator.name,           // ⭐ Campo principal
+            operatorName: operator.name,      // ⭐ Campo alternativo
+            beneficiary: assignment.beneficiary,
+            phone: assignment.primaryPhone,
+            commune: assignment.commune
+          };
+          localAssignments.push(assignmentData);
+          console.log('✅ Asignación local agregada:', assignmentData);
+        });
+      } else {
+        console.log(`⚠️ Problemas con operador ${operatorId}:`, {
+          operator: operator,
+          assignments: assignments,
+          isArray: Array.isArray(assignments)
+        });
+      }
+    });
+    
+    console.log('📊 Total asignaciones locales:', localAssignments.length);
+    
+    // 🔧 DIAGNÓSTICO FINAL: Verificar si Hermes está en el resultado
+    console.log('🔍 DIAGNÓSTICO - Buscando Hermes Eduardo Valbuena Romero en resultado final...');
+    const hermesInFinal = localAssignments.find(ass => 
+      ass.beneficiary?.includes('Hermes') || 
+      ass.beneficiary?.includes('HERMES')
+    );
+    if (hermesInFinal) {
+      console.log('🎯 Hermes encontrado en resultado final:', hermesInFinal);
+    } else {
+      console.log('❌ Hermes NO encontrado en resultado final');
+      console.log('📋 Primeros 5 beneficiarios disponibles:', localAssignments.slice(0, 5).map(a => a.beneficiary));
+    }
+    
+    return localAssignments;
+  };
   
-  // Agregar fallback a asignaciones locales si Zustand está vacío
-  const assignmentsToUse = allAssignments && allAssignments.length > 0 ? 
-    allAssignments : 
-    (assignments && assignments.length > 0 ? assignments : []);
+  const assignmentsToUse = createAssignmentsFromLocal();
+  
+  // 🔧 DEBUG: Verificar datos finales
+  console.log('🎯 App.jsx - assignmentsToUse final:', assignmentsToUse);
   
   const followUpData = getFollowUpData(assignmentsToUse);
+  
+  console.log('📊 App.jsx - followUpData resultado:', followUpData);
   
   // Filtros para historial de seguimientos
   const filteredFollowUps = followUpData.filter(item => {
@@ -1481,6 +1651,116 @@ const TeleasistenciaApp = () => {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Buscador de Beneficiarios */}
+      <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="flex justify-between items-center mb-4">
+          <div>
+            <h4 className="text-lg font-semibold text-gray-800">Búsqueda de Beneficiarios</h4>
+            <p className="text-sm text-gray-600">Encuentra rápidamente qué teleoperadora está asignada a un beneficiario</p>
+          </div>
+          <button
+            onClick={() => setShowBeneficiarySearch(!showBeneficiarySearch)}
+            className={`px-4 py-2 rounded-lg transition-colors flex items-center gap-2 ${
+              showBeneficiarySearch 
+                ? 'bg-red-500 text-white hover:bg-red-600' 
+                : 'bg-blue-500 text-white hover:bg-blue-600'
+            }`}
+          >
+            <Search className="w-4 h-4" />
+            {showBeneficiarySearch ? 'Cerrar Búsqueda' : 'Buscar Beneficiario'}
+          </button>
+        </div>
+
+        {showBeneficiarySearch && (
+          <div className="space-y-4">
+            <div className="flex gap-4 items-center">
+              <div className="flex-1">
+                <input
+                  type="text"
+                  placeholder="Buscar por nombre del beneficiario, teleoperadora, teléfono o comuna..."
+                  value={beneficiarySearchTerm}
+                  onChange={(e) => handleBeneficiarySearch(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <button
+                onClick={() => {
+                  setBeneficiarySearchTerm('');
+                  setBeneficiarySearchResults([]);
+                }}
+                className="px-3 py-2 text-gray-500 hover:text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Resultados de búsqueda */}
+            {beneficiarySearchResults.length > 0 && (
+              <div className="border border-gray-200 rounded-lg divide-y divide-gray-200 max-h-96 overflow-y-auto">
+                <div className="bg-gray-50 px-4 py-2 text-sm font-medium text-gray-700">
+                  {beneficiarySearchResults.length} resultado(s) encontrado(s)
+                </div>
+                {beneficiarySearchResults.map((result, index) => (
+                  <div key={`${result.id || index}-${result.source}`} className="p-4 hover:bg-gray-50">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <h5 className="font-semibold text-gray-900">
+                            {result.beneficiary || result.beneficiario}
+                          </h5>
+                          <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full font-medium">
+                            Beneficiario
+                          </span>
+                          <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full">
+                            {result.source}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
+                          <div className="flex items-center gap-1">
+                            <Users className="w-4 h-4 text-gray-400" />
+                            <span><strong>Teleoperadora:</strong> {result.operatorName || result.operator || 'Sin asignar'}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Phone className="w-4 h-4 text-gray-400" />
+                            <span><strong>Teléfono Principal:</strong> {result.primaryPhone || result.phone || result.telefono || result.numero_cliente || 'N/A'}</span>
+                          </div>
+                          {result.phones && result.phones.length > 1 && (
+                            <div className="flex items-center gap-1">
+                              <Phone className="w-4 h-4 text-gray-400" />
+                              <span><strong>Otros Teléfonos:</strong> {result.phones.slice(1).join(', ')}</span>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1">
+                            <FileSpreadsheet className="w-4 h-4 text-gray-400" />
+                            <span><strong>Comuna:</strong> {result.commune || result.comuna || 'N/A'}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {beneficiarySearchTerm && beneficiarySearchResults.length === 0 && (
+              <div className="text-center py-8 text-gray-500">
+                <Search className="w-12 h-12 mx-auto text-gray-300 mb-2" />
+                <p>No se encontraron beneficiarios que coincidan con "{beneficiarySearchTerm}"</p>
+                <p className="text-sm mt-1">Intenta con otro término de búsqueda</p>
+              </div>
+            )}
+
+            {!beneficiarySearchTerm && (
+              <div className="text-center py-8 text-gray-500">
+                <Search className="w-12 h-12 mx-auto text-gray-300 mb-2" />
+                <p>Escribe el nombre de un beneficiario, teleoperadora, teléfono o comuna para buscar</p>
+                <p className="text-sm mt-1">La búsqueda incluye todas las asignaciones registradas</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Modal para crear operador */}

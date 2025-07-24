@@ -104,21 +104,29 @@ const useAppStore = create(
         const { operatorAssignments, operators } = get();
         const allAssignments = [];
         
+        console.log('🔍 getAllAssignments - operatorAssignments:', operatorAssignments);
+        console.log('🔍 getAllAssignments - operators:', operators);
+        
         Object.entries(operatorAssignments).forEach(([operatorId, assignments]) => {
           const operator = operators.find(op => op.id === operatorId);
           if (operator && assignments) {
+            console.log(`📋 Procesando asignaciones para ${operator.name}:`, assignments.length);
             assignments.forEach(assignment => {
-              allAssignments.push({
+              const assignmentData = {
                 id: assignment.id,
-                operator: operator.name,
+                operator: operator.name,           // ⭐ Campo correcto para operadora
+                operatorName: operator.name,      // ⭐ Campo alternativo
                 beneficiary: assignment.beneficiary,
                 phone: assignment.primaryPhone,
                 commune: assignment.commune
-              });
+              };
+              allAssignments.push(assignmentData);
+              console.log('✅ Asignación agregada:', assignmentData);
             });
           }
         });
         
+        console.log('📊 Total asignaciones devueltas:', allAssignments.length);
         return allAssignments;
       },
 

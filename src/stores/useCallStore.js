@@ -365,7 +365,11 @@ const useCallStore = create(
 
       getFollowUpData: (assignments) => {
         const { processedData } = get();
+        console.log('🔍 getFollowUpData iniciando con assignments:', assignments);
+        console.log('🔍 getFollowUpData - processedData:', processedData?.length, 'llamadas');
+        
         if (!processedData || processedData.length === 0) {
+          console.log('❌ No hay processedData disponible');
           return [];
         }
         
@@ -411,6 +415,30 @@ const useCallStore = create(
           }
         };
         
+        // Función auxiliar para parsear fechas chilenas correctamente
+        const parseChileanDate = (dateStr) => {
+          if (!dateStr || dateStr === 'N/A') return null;
+          
+          try {
+            // Si es formato chileno DD-MM-YYYY o DD/MM/YYYY
+            if (typeof dateStr === 'string' && /^\d{1,2}[-\/]\d{1,2}[-\/]\d{4}$/.test(dateStr)) {
+              const [day, month, year] = dateStr.split(/[-\/]/);
+              return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+            }
+            
+            // Si es número (Excel serial date)
+            if (typeof dateStr === 'number') {
+              return new Date((dateStr - 25569) * 86400 * 1000);
+            }
+            
+            // Fallback a Date normal
+            return new Date(dateStr);
+          } catch (error) {
+            console.warn('Error parseando fecha:', dateStr, error);
+            return null;
+          }
+        };
+        
         const beneficiaryStatus = {};
 
         // Analizar estado de cada beneficiario
@@ -419,6 +447,16 @@ const useCallStore = create(
           const beneficiary = call.beneficiario || call.beneficiary;
           const result = call.resultado || call.result || (call.categoria === 'exitosa' ? 'Llamado exitoso' : 'Llamado fallido');
           const date = call.fecha || call.date;
+          
+          // 🔍 DEBUG: Análisis específico para Sara Esquivel Miranda
+          if (beneficiary && beneficiary.includes('Sara')) {
+            console.log('🔍 SARA DEBUG - Procesando llamada:', {
+              beneficiary: beneficiary,
+              date: date,
+              result: result,
+              rawCall: call
+            });
+          }
           
           if (!beneficiary) return; // Skip si no hay beneficiario
           
@@ -433,27 +471,145 @@ const useCallStore = create(
 
           beneficiaryStatus[beneficiary].calls.push(call);
 
-          // Mantener la llamada más reciente
-          const currentDate = new Date(date);
-          const lastDate = new Date(beneficiaryStatus[beneficiary].lastDate);
+          // Mantener la llamada más reciente usando parseador correcto
+          const currentDate = parseChileanDate(date);
+          const lastDate = parseChileanDate(beneficiaryStatus[beneficiary].lastDate);
           
-          if (!isNaN(currentDate.getTime()) && (isNaN(lastDate.getTime()) || currentDate > lastDate)) {
+          // 🔍 DEBUG: Análisis específico para Sara
+          if (beneficiary && beneficiary.includes('Sara')) {
+            console.log('🔍 SARA DEBUG - Comparación de fechas CORREGIDA:', {
+              beneficiary: beneficiary,
+              currentDateString: date,
+              currentDateParsed: currentDate,
+              currentDateValid: currentDate !== null,
+              lastDateString: beneficiaryStatus[beneficiary].lastDate,
+              lastDateParsed: lastDate,
+              lastDateValid: lastDate !== null,
+              currentIsNewer: currentDate && lastDate ? currentDate > lastDate : false,
+              willUpdate: currentDate && (!lastDate || currentDate > lastDate)
+            });
+          }
+          
+          if (currentDate && (!lastDate || currentDate > lastDate)) {
             beneficiaryStatus[beneficiary].lastResult = result;
             beneficiaryStatus[beneficiary].lastDate = date;
+            
+            // 🔍 DEBUG: Confirmación de actualización para Sara
+            if (beneficiary && beneficiary.includes('Sara')) {
+              console.log('🔍 SARA DEBUG - Fecha actualizada CORREGIDA:', {
+                beneficiary: beneficiary,
+                newLastDate: date,
+                newLastResult: result,
+                totalCalls: beneficiaryStatus[beneficiary].calls.length
+              });
+            }
           }
         });
 
         // Generar datos de seguimiento
-        return Object.values(beneficiaryStatus).map(item => {
-          // Buscar asignación de manera más robusta
+        const result = Object.values(beneficiaryStatus).map(item => {
+          console.log('🔍 Procesando beneficiario:', item.beneficiary);
+          
+          // 🔍 DEBUG: Análisis completo para Sara
+          if (item.beneficiary && item.beneficiary.includes('Sara')) {
+            console.log('🔍 SARA DEBUG - Análisis completo:', {
+              beneficiary: item.beneficiary,
+              totalCalls: item.calls.length,
+              lastDate: item.lastDate,
+              lastResult: item.lastResult,
+              allDates: item.calls.map(c => c.fecha || c.date),
+              sortedDates: item.calls.map(c => c.fecha || c.date).sort(),
+              uniqueDates: [...new Set(item.calls.map(c => c.fecha || c.date))]
+            });
+            
+            // Encontrar manualmente la fecha más reciente
+            const allDates = item.calls.map(c => c.fecha || c.date).filter(d => d && d !== 'N/A');
+            console.log('🔍 SARA DEBUG - Todas las fechas sin filtrar:', allDates);
+            
+            // Intentar ordenar las fechas manualmente
+            const parsedDates = allDates.map(dateStr => {
+              if (typeof dateStr === 'string' && /^\d{1,2}-\d{1,2}-\d{4}$/.test(dateStr)) {
+                const [day, month, year] = dateStr.split('-');
+                return {
+                  original: dateStr,
+                  parsed: new Date(year, month - 1, day),
+                  timestamp: new Date(year, month - 1, day).getTime()
+                };
+              } else {
+                return {
+                  original: dateStr,
+                  parsed: new Date(dateStr),
+                  timestamp: new Date(dateStr).getTime()
+                };
+              }
+            }).filter(d => !isNaN(d.timestamp));
+            
+            parsedDates.sort((a, b) => b.timestamp - a.timestamp);
+            console.log('🔍 SARA DEBUG - Fechas ordenadas manualmente:', parsedDates);
+            
+            if (parsedDates.length > 0) {
+              console.log('🔍 SARA DEBUG - Fecha más reciente encontrada:', parsedDates[0].original);
+            }
+          }
+          
+          // 🔧 MEJORA: Buscar asignación de manera más robusta y flexible
           let assignment = null;
           
           if (assignments && Array.isArray(assignments)) {
-            // Buscar por diferentes campos posibles
+            console.log('🔍 Buscando assignment para:', item.beneficiary);
+            console.log('📋 Total assignments disponibles:', assignments.length);
+            
+            // Buscar por diferentes campos posibles con coincidencia flexible
             assignment = assignments.find(a => {
-              const assignmentBeneficiary = a.beneficiary || a.beneficiario;
-              return assignmentBeneficiary === item.beneficiary;
+              const assignmentBeneficiary = (a.beneficiary || a.beneficiario || '').trim();
+              const itemBeneficiary = (item.beneficiary || '').trim();
+              
+              // Log de comparación detallada
+              console.log(`🔍 Comparando: "${assignmentBeneficiary}" vs "${itemBeneficiary}"`);
+              
+              // Coincidencia exacta (case sensitive)
+              if (assignmentBeneficiary === itemBeneficiary) {
+                console.log('✅ Coincidencia exacta encontrada');
+                return true;
+              }
+              
+              // Coincidencia exacta (case insensitive)
+              if (assignmentBeneficiary.toLowerCase() === itemBeneficiary.toLowerCase()) {
+                console.log('✅ Coincidencia exacta (case insensitive) encontrada');
+                return true;
+              }
+              
+              // Coincidencia parcial para casos de variaciones menores
+              const assignmentLower = assignmentBeneficiary.toLowerCase();
+              const itemLower = itemBeneficiary.toLowerCase();
+              
+              if (assignmentLower && itemLower && 
+                  (assignmentLower.includes(itemLower) || 
+                   itemLower.includes(assignmentLower))) {
+                console.log('✅ Coincidencia parcial encontrada');
+                return true;
+              }
+              
+              return false;
             });
+            
+            if (assignment) {
+              console.log('✅ Assignment encontrado para', item.beneficiary, ':', assignment);
+            } else {
+              console.log('❌ No se encontró assignment para:', item.beneficiary);
+              console.log('📋 Assignments disponibles:', assignments?.map(a => ({
+                beneficiary: a.beneficiary || a.beneficiario,
+                operator: a.operator || a.operatorName
+              })));
+              console.log('🔍 Comparación detallada para:', item.beneficiary);
+              assignments?.forEach((a, index) => {
+                const assignmentBeneficiary = (a.beneficiary || a.beneficiario || '').trim().toLowerCase();
+                const itemBeneficiary = (item.beneficiary || '').trim().toLowerCase();
+                console.log(`  [${index}] "${assignmentBeneficiary}" vs "${itemBeneficiary}" - Exacta: ${assignmentBeneficiary === itemBeneficiary}`);
+              });
+            }
+          } else {
+            console.log('⚠️ No hay assignments array disponible');
           }
           
           let status = 'pendiente';
@@ -467,68 +623,56 @@ const useCallStore = create(
             colorClass = 'bg-red-100 text-red-800';
           }
 
-          // Obtener información de la operadora PRIORIZANDO las asignaciones
-          let operatorName = 'Sin asignar';
+          // 🔧 CORRECCIÓN: Obtener información de la operadora SOLO de las asignaciones
+          let operatorName = 'No Asignado'; // Cambio: Mostrar "No Asignado" en lugar de "Sin asignar"
           let phone = 'N/A';
           let commune = 'N/A';
           
           if (assignment) {
-            // Prioridad 1: Obtener de las asignaciones (fuente confiable)
+            // ✅ ÚNICA FUENTE: Obtener SOLO de las asignaciones (fuente confiable)
+            console.log('🔍 Assignment encontrado para', item.beneficiary, ':', assignment);
+            
             const candidateOperator = assignment.operator || 
                                     assignment.operador || 
                                     assignment.operatorName ||
                                     assignment.teleoperadora ||
                                     assignment.name;
             
-            // Validar que el operador sea válido
+            console.log('🔍 Candidate operator:', candidateOperator);
+            
+            // Validar que el operador sea válido (no es un resultado de llamada)
             if (candidateOperator && 
                 candidateOperator !== 'Solo HANGUP' && 
                 candidateOperator !== 'HANGUP' &&
                 candidateOperator !== 'No identificado' &&
+                candidateOperator !== 'Llamado exitoso' &&  // ⭐ NUEVO: Filtrar resultados de llamada
+                candidateOperator !== 'Llamado fallido' &&  // ⭐ NUEVO: Filtrar resultados de llamada
+                candidateOperator !== 'exitosa' &&          // ⭐ NUEVO: Filtrar resultados de llamada
+                candidateOperator !== 'fallida' &&          // ⭐ NUEVO: Filtrar resultados de llamada
                 candidateOperator.trim().length > 2 &&
                 !/^\d{1,2}[-\/]\d{1,2}[-\/]\d{4}$/.test(candidateOperator)) {
               operatorName = candidateOperator;
+              console.log('✅ Operadora asignada encontrada:', operatorName);
+            } else {
+              console.log('❌ Operadora inválida filtrada:', candidateOperator);
             }
             
-            // Probar diferentes campos para el teléfono
+            // Obtener teléfono y comuna de la asignación
             phone = assignment.phone || 
                    assignment.telefono || 
                    assignment.primaryPhone ||
                    assignment.numero_cliente || 
                    'N/A';
             
-            // Probar diferentes campos para la comuna
             commune = assignment.commune || 
                      assignment.comuna || 
                      'N/A';
-          } 
-          
-          // Prioridad 2: Solo si no hay operador válido desde asignación
-          if (operatorName === 'Sin asignar') {
-            const callWithOperator = item.calls.find(call => {
-              const operador = call.operador || call.operator || call.teleoperadora;
-              // Validación mejorada de operadores
-              return operador && 
-                     operador !== 'No identificado' && 
-                     operador !== 'Solo HANGUP' &&
-                     operador !== 'HANGUP' &&
-                     operador !== item.beneficiary &&
-                     operador.trim().length > 2 &&
-                     !/^\d{1,2}:\d{2}/.test(operador) &&
-                     !/^\d+$/.test(operador) &&
-                     !/^\d{1,2}[-\/]\d{1,2}[-\/]\d{4}$/.test(operador) &&
-                     !/^(si|no|exitoso|fallido|pendiente)$/i.test(operador) &&
-                     /^[a-záéíóúüñA-ZÁÉÍÓÚÜÑ\s\-\.]{3,}$/.test(operador);
-            });
-            
-            if (callWithOperator) {
-              const detectedOperator = callWithOperator.operador || 
-                                     callWithOperator.operator || 
-                                     callWithOperator.teleoperadora;
-              
-              operatorName = detectedOperator;
-            }
+          } else {
+            console.log('⚠️ No hay asignación para beneficiario:', item.beneficiary);
           }
+          
+          // 🚫 ELIMINADO: Prioridad 2 que buscaba en datos de llamadas
+          // Esto causaba que apareciera "Llamado exitoso" en lugar del nombre de la operadora
 
           const result = {
             id: item.beneficiary,
@@ -542,8 +686,16 @@ const useCallStore = create(
             colorClass
           };
           
+          // 🔍 DEBUG: Resultado final para Sara
+          if (item.beneficiary && item.beneficiary.includes('Sara')) {
+            console.log('🔍 SARA DEBUG - Resultado final:', result);
+          }
+          
           return result;
         });
+        
+        console.log('📊 Total de beneficiarios en seguimiento:', result.length);
+        return result;
       },
 
       // Getters útiles
