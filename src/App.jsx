@@ -135,9 +135,10 @@ const TeleasistenciaApp = () => {
 
   // Reanalizar datos cuando cambian las asignaciones
   useEffect(() => {
-    if (callData.length > 0 && assignments.length > 0) {
+    if (zustandCallData.length > 0 && assignments.length > 0) {
       console.log('🔄 Re-analizando datos tras actualización de asignaciones...');
-      analyzeCallData(callData);
+      // 🔧 CORRECCIÓN: Usar función de Zustand sin parámetros - ya tiene los datos
+      analyzeCallData();
     }
   }, [assignments]);
 
@@ -155,6 +156,10 @@ const TeleasistenciaApp = () => {
       // Verificar si la operación fue exitosa
       if (userOperators !== null) {
         setOperators(userOperators || []);
+        
+        // 🔧 SINCRONIZACIÓN: Actualizar también Zustand
+        setZustandOperators(userOperators || []);
+        console.log('✅ Operadores cargados y sincronizados desde Firebase:', userOperators?.length || 0);
 
         // Cargar asignaciones
         const userAssignments = await assignmentService.getAllUserAssignments(user.uid);
@@ -169,9 +174,14 @@ const TeleasistenciaApp = () => {
         
         // Si hay datos de llamadas reales, analizarlos; sino, usar datos de ejemplo
         if (userCallData && userCallData.length > 0) {
-          console.log('📊 Analizando datos reales de llamadas...');
-          // Esperar a que los assignments se actualicen, luego analizar
-          setTimeout(() => analyzeCallData(userCallData), 100);
+          console.log('📊 Cargando y analizando datos reales de llamadas...');
+          
+          // 🔧 CORRECCIÓN: Sincronizar primero con Zustand, luego analizar
+          setZustandCallData(userCallData, 'firebase');
+          console.log('✅ Datos sincronizados con Zustand:', userCallData.length, 'llamadas');
+          
+          // Analizar datos - Zustand ya tiene los datos
+          setTimeout(() => analyzeCallData(), 100);
         } else {
           console.log('📝 No hay datos de llamadas, inicializando métricas por defecto...');
           generateSampleData();
@@ -311,6 +321,10 @@ const TeleasistenciaApp = () => {
     // Filtrar elementos null o inválidos antes de setear
     const validOperators = sampleOperators.filter(op => op && op.id && op.name);
     setOperators(validOperators);
+    
+    // 🔧 SINCRONIZACIÓN: Asegurar que Zustand tenga los mismos operadores
+    setZustandOperators(validOperators);
+    console.log('✅ Operadores inicializados y sincronizados:', validOperators.length);
   };
 
   // Funciones para gestión de operadores
@@ -320,6 +334,11 @@ const TeleasistenciaApp = () => {
     try {
       const newOperator = await operatorService.create(user.uid, operatorForm);
       setOperators([...operators, newOperator]);
+      
+      // 🔧 SINCRONIZACIÓN: Actualizar también Zustand
+      setZustandOperators([...operators, newOperator]);
+      console.log('✅ Operador creado y sincronizado:', newOperator);
+      
       setOperatorForm({ name: '', email: '', phone: '' });
       setShowCreateOperator(false);
     } catch (error) {
@@ -333,7 +352,13 @@ const TeleasistenciaApp = () => {
       await operatorService.delete(operatorId);
       await assignmentService.deleteOperatorAssignments(user.uid, operatorId);
       
-      setOperators(operators.filter(op => op.id !== operatorId));
+      const updatedOperators = operators.filter(op => op.id !== operatorId);
+      setOperators(updatedOperators);
+      
+      // 🔧 SINCRONIZACIÓN: Actualizar también Zustand
+      setZustandOperators(updatedOperators);
+      console.log('✅ Operador eliminado y sincronizado:', operatorId);
+      
       // También eliminar sus asignaciones
       const newAssignments = { ...operatorAssignments };
       delete newAssignments[operatorId];
@@ -888,7 +913,9 @@ const TeleasistenciaApp = () => {
     }
   };
 
-  // Renombrar la función de análisis legacy
+  // 🚫 FUNCIÓN LEGACY DESHABILITADA - No usar más, usar Zustand analyzeCallData()
+  // Esta función causaba inconsistencias en las métricas del Dashboard
+  /*
   const analyzeCallDataLegacy = (data) => {
     const successfulCalls = data.filter(call => call.result === 'Llamado exitoso');
     const failedCalls = data.filter(call => call.result !== 'Llamado exitoso');
@@ -948,6 +975,8 @@ const TeleasistenciaApp = () => {
     // Generar distribución horaria
     generateHourlyDistribution(data);
   };
+  */
+  // 🔧 FIN DEL COMENTARIO DE FUNCIÓN LEGACY
 
   // ✅ ELIMINADO: generateFollowUpHistory ahora usa datos de Zustand directamente
   // La función getFollowUpData en Zustand ya maneja el formateo de fechas correctamente
@@ -1127,9 +1156,10 @@ const TeleasistenciaApp = () => {
                firebaseStatus === 'connecting' ? 'Conectando...' : 'Modo demo'}
             </span>
           </div>
-          {callData.length > 0 && (
+          {/* 🔧 CORRECCIÓN: Usar zustandCallData para consistencia */}
+          {zustandCallData.length > 0 && (
             <p className="text-xs text-gray-500 mt-1">
-              {callData.length} llamadas cargadas
+              {zustandCallData.length} llamadas cargadas
             </p>
           )}
         </div>
@@ -1172,12 +1202,13 @@ const TeleasistenciaApp = () => {
       }
       
       if (firebaseStatus === 'connected') {
-        if (callData.length > 0) {
+        // 🔧 CORRECCIÓN: Usar zustandCallData para consistencia con métricas del Dashboard
+        if (zustandCallData.length > 0) {
           return {
             color: 'bg-green-50 border-green-200',
             icon: '✅',
             title: 'Datos reales activos',
-            message: `Mostrando datos reales de ${callData.length} llamadas registradas`
+            message: `Mostrando datos reales de ${zustandCallData.length} llamadas registradas`
           };
         } else {
           return {
@@ -1240,9 +1271,38 @@ const TeleasistenciaApp = () => {
       uniqueBeneficiaries: 0,
       protocolCompliance: 0
     };
+    
+    // 🔧 DEBUG: Verificar fuentes de datos para identificar inconsistencias
+    console.log('🔍 DASHBOARD METRICS - Análisis completo:', {
+      zustandCallData_length: zustandCallData?.length || 0,
+      callData_length: callData?.length || 0,
+      zustandCallMetrics: zustandCallMetrics,
+      metrics_used: metrics,
+      dashboard_totalCalls: metrics.totalCalls,
+      banner_shows: callData.length,
+      sidebar_shows: callData.length
+    });
 
-    const operatorCount = zustandOperators.length;
-    const activeAssignments = zustandOperatorAssignments ? Object.keys(zustandOperatorAssignments).length : 0;
+    // 🔧 CORRECCIÓN: Usar la misma fuente de datos que el módulo Asignaciones
+    // Dashboard debe mostrar lo mismo que el módulo Asignaciones para consistencia
+    const operatorCount = operators.length; // ⭐ Cambiado de zustandOperators a operators
+    
+    // 🔧 MEJORA: Contar el total de asignaciones, no solo teleoperadoras con asignaciones
+    const totalAssignments = Object.values(operatorAssignments)
+      .reduce((total, assignments) => total + (assignments ? assignments.length : 0), 0);
+    
+    console.log('🔍 DASHBOARD SYNC - Contadores CORREGIDOS:', {
+      operatorCount: operatorCount,
+      totalAssignments: totalAssignments,
+      operatorsLocal: operators.length,
+      operatorsZustand: zustandOperators.length,
+      operatorAssignmentsLocal: Object.keys(operatorAssignments).length,
+      operatorAssignmentsZustand: zustandOperatorAssignments ? Object.keys(zustandOperatorAssignments).length : 0,
+      operatorAssignmentsDetalle: Object.entries(operatorAssignments).map(([id, assignments]) => ({
+        operatorId: id,
+        assignmentCount: assignments ? assignments.length : 0
+      }))
+    });
 
     return (
     <div className="space-y-6">
@@ -1287,8 +1347,8 @@ const TeleasistenciaApp = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <MetricCard
           title="Asignaciones activas"
-          value={activeAssignments}
-          subtitle="Relaciones vigentes beneficiario-teleoperadora"
+          value={totalAssignments}
+          subtitle="Total de beneficiarios asignados"
           icon={Users}
           color="blue"
         />
