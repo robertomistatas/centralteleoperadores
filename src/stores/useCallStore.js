@@ -196,61 +196,191 @@ const useCallStore = create(
       },
 
       // Análisis específicos para auditoría
-      getOperatorMetrics: (operatorAssignments = null) => {
+      getOperatorMetrics: (operators = null, operatorAssignments = null) => {
         const { processedData } = get();
+        console.log('🔍 [AUDIT CRITICAL] === ANÁLISIS DE MÉTRICAS DE OPERADORES ===');
+        console.log('🔍 [AUDIT CRITICAL] ProcessedData disponible:', processedData?.length || 0, 'llamadas');
+        console.log('🔍 [AUDIT CRITICAL] Operators recibidos:', operators?.length || 0);
+        console.log('🔍 [AUDIT CRITICAL] OperatorAssignments recibidos:', operatorAssignments ? Object.keys(operatorAssignments).length : 0);
         
-        // Si no se proporciona operatorAssignments, usar los datos procesados directamente
-        if (!operatorAssignments || typeof operatorAssignments !== 'object') {
+        // 🚨 SOLUCIÓN CRÍTICA: PRIORIZAR DATOS DE ASIGNACIONES REALES
+        // Obtener datos del store de aplicación para conexión inter-módulos
+        const appStore = window.useAppStore?.getState();
+        const realOperators = operators || appStore?.operators || [];
+        const realAssignments = operatorAssignments || appStore?.operatorAssignments || {};
+        
+        console.log('🔍 [AUDIT CRITICAL] === DATOS FINALES PARA ANÁLISIS ===');
+        console.log('🔍 [AUDIT CRITICAL] Operadores finales:', realOperators.length);
+        console.log('🔍 [AUDIT CRITICAL] Asignaciones finales:', Object.keys(realAssignments).length);
+        
+        // ✅ NUEVA ESTRATEGIA: Crear métricas basadas en operadores REALES del sistema
+        if (realOperators.length > 0 && processedData.length > 0) {
+          console.log('🎯 [AUDIT CRITICAL] USANDO OPERADORES REALES DEL SISTEMA');
+          
           const operatorMetrics = {};
           
-          // Función auxiliar para validar si un valor es un nombre de operador válido
+          // Inicializar métricas para cada operador real
+          realOperators.forEach(operator => {
+            operatorMetrics[operator.name] = {
+              operador: operator.name,
+              totalLlamadas: 0,
+              llamadasExitosas: 0,
+              tiempoTotal: 0,
+              promedioLlamada: 0
+            };
+            console.log('✅ [AUDIT CRITICAL] Operador real inicializado:', operator.name);
+          });
+          
+          // Mapear llamadas a operadores usando asignaciones
+          processedData.forEach((call, index) => {
+            const beneficiario = call.beneficiario || call.beneficiary;
+            
+            if (!beneficiario) return;
+            
+            // Buscar a qué operador está asignado este beneficiario
+            let assignedOperator = null;
+            
+            Object.entries(realAssignments).forEach(([operatorId, assignments]) => {
+              if (assignments && Array.isArray(assignments)) {
+                const assignment = assignments.find(a => 
+                  a.beneficiary === beneficiario || a.beneficiario === beneficiario
+                );
+                if (assignment) {
+                  const operator = realOperators.find(op => op.id === operatorId);
+                  if (operator) {
+                    assignedOperator = operator.name;
+                  }
+                }
+              }
+            });
+            
+            // Si encontramos asignación, agregar a métricas del operador
+            if (assignedOperator && operatorMetrics[assignedOperator]) {
+              const metrics = operatorMetrics[assignedOperator];
+              metrics.totalLlamadas++;
+              
+              if (call.categoria === 'exitosa' || call.resultado === 'Llamado exitoso') {
+                metrics.llamadasExitosas++;
+              }
+              
+              metrics.tiempoTotal += call.duracion || 0;
+              
+              if (index < 10) { // Debug primeras 10
+                console.log(`✅ [AUDIT CRITICAL] Llamada ${index}: ${beneficiario} → ${assignedOperator}`);
+              }
+            } else if (index < 10) {
+              console.log(`⚠️ [AUDIT CRITICAL] Llamada ${index}: ${beneficiario} → No asignado`);
+            }
+          });
+          
+          // Calcular promedios
+          Object.values(operatorMetrics).forEach(metrics => {
+            metrics.promedioLlamada = metrics.totalLlamadas > 0 ? 
+              Math.round(metrics.tiempoTotal / metrics.totalLlamadas) : 0;
+          });
+          
+          // Mostrar solo operadores con llamadas
+          const result = Object.values(operatorMetrics).filter(m => m.totalLlamadas > 0);
+          
+          console.log('🎯 [AUDIT CRITICAL] === RESULTADO FINAL CORREGIDO ===');
+          result.forEach((metric, index) => {
+            console.log(`${index + 1}. "${metric.operador}": ${metric.totalLlamadas} llamadas`);
+          });
+          
+          if (result.length === 0) {
+            console.log('⚠️ [AUDIT CRITICAL] No se encontraron llamadas asignadas a operadores reales');
+            console.log('🔍 [AUDIT CRITICAL] Verificando si hay beneficiarios en común...');
+            
+            // Debug: Ver si hay beneficiarios en común
+            const beneficiariosEnLlamadas = new Set(processedData.map(call => call.beneficiario || call.beneficiary));
+            const beneficiariosEnAsignaciones = new Set();
+            
+            Object.values(realAssignments).forEach(assignments => {
+              if (assignments && Array.isArray(assignments)) {
+                assignments.forEach(a => beneficiariosEnAsignaciones.add(a.beneficiary || a.beneficiario));
+              }
+            });
+            
+            console.log('📊 [AUDIT DEBUG] Beneficiarios en llamadas:', beneficiariosEnLlamadas.size);
+            console.log('📊 [AUDIT DEBUG] Beneficiarios en asignaciones:', beneficiariosEnAsignaciones.size);
+            
+            // Mostrar primeros 5 de cada lado para debug
+            const muestra = Array.from(beneficiariosEnLlamadas).slice(0, 5);
+            const muestraAsignaciones = Array.from(beneficiariosEnAsignaciones).slice(0, 5);
+            
+            console.log('📋 [AUDIT DEBUG] Muestra llamadas:', muestra);
+            console.log('📋 [AUDIT DEBUG] Muestra asignaciones:', muestraAsignaciones);
+          }
+          
+          return result;
+        }
+        
+        // Si no se proporcionan operadores ni asignaciones, usar los datos procesados directamente
+        if ((!operators || operators.length === 0) && (!operatorAssignments || Object.keys(operatorAssignments).length === 0)) {
+          console.log('🔍 [AUDIT CRITICAL] Analizando operadores directamente de datos de llamadas...');
+          const operatorMetrics = {};
+          
+          // 🔧 SOLUCIÓN INTELIGENTE: Analizar datos reales antes de filtrar
           const isValidOperatorName = (name) => {
             if (!name || typeof name !== 'string') return false;
             
-            // Rechazar formatos de hora
-            if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(name)) return false;
+            const cleanName = name.trim();
             
-            // Rechazar solo números
-            if (/^\d+$/.test(name)) return false;
+            // Rechazar valores muy obvios que no son nombres
+            if (cleanName.length < 2) return false;
             
-            // Rechazar fechas
-            if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(name) || !isNaN(Date.parse(name))) return false;
+            // 🚨 RECHAZAR ESTADOS DE LLAMADAS ESPECÍFICOS (más específico)
+            if (/^(sin respuesta|llamado exitoso|ocupado|no contesta|busy|answered|no answer|hangup|ringing|failed|success)$/i.test(cleanName)) {
+              console.log(`❌ [AUDIT CRITICAL] Estado de llamada rechazado: "${cleanName}"`);
+              return false;
+            }
             
-            // Rechazar valores muy cortos
-            if (name.trim().length < 3) return false;
+            // Rechazar valores técnicos obvios
+            if (/^(no|si|n\/a|na|null|undefined|pendiente|solo)$/i.test(cleanName)) {
+              console.log(`❌ [AUDIT CRITICAL] Valor técnico rechazado: "${cleanName}"`);
+              return false;
+            }
             
-            // Aceptar nombres que contengan al menos 2 palabras o caracteres alfabéticos
-            const words = name.trim().split(/\s+/).filter(word => word.length > 1);
-            if (words.length >= 2) return true;
+            // Rechazar fechas y horas
+            if (/^\d{1,2}[-\/]\d{1,2}[-\/]\d{4}$/.test(cleanName)) return false; // Fechas
+            if (/^\d{1,2}:\d{2}/.test(cleanName)) return false; // Horas
+            if (/^\d+$/.test(cleanName)) return false; // Solo números
             
-            // Aceptar si contiene principalmente letras
-            if (/^[a-záéíóúüñA-ZÁÉÍÓÚÜÑ\s\-\.]{3,}$/.test(name)) return true;
+            // ✅ ENFOQUE MÁS PERMISIVO: Si contiene letras y no es estado, probablemente es nombre
+            if (/^[A-Za-záéíóúüñÁÉÍÓÚÜÑ\s\-\.']{2,}$/.test(cleanName)) {
+              // Si tiene al menos una letra, probablemente es un nombre
+              if (/[A-Za-záéíóúüñÁÉÍÓÚÜÑ]/.test(cleanName)) {
+                console.log(`✅ [AUDIT CRITICAL] Nombre VÁLIDO detectado: "${cleanName}"`);
+                return true;
+              }
+            }
             
+            console.log(`❌ [AUDIT CRITICAL] Nombre RECHAZADO: "${cleanName}" (no parece nombre de persona)`);
             return false;
           };
           
+          console.log('🔍 [AUDIT CRITICAL] === EXTRAYENDO OPERADORES DE LLAMADAS ===');
+          
           // Crear métricas basadas solo en los datos de llamadas
-          processedData.forEach(call => {
+          processedData.forEach((call, index) => {
             // Intentar obtener el operador de diferentes campos posibles
             let operatorName = call.operador || call.operator || call.teleoperadora || call.agente;
+            
+            if (index < 5) { // Debug primeros 5
+              console.log(`🔍 [AUDIT CRITICAL] Llamada ${index}: operador="${operatorName}", beneficiario="${call.beneficiario}"`);
+            }
             
             // Validar que el operador no sea un beneficiario ni un valor inválido
             if (!isValidOperatorName(operatorName) || 
                 operatorName === call.beneficiario || 
                 operatorName === call.beneficiary) {
+              
+              if (index < 5 && operatorName) {
+                console.log(`🔍 [AUDIT CRITICAL] Llamada ${index}: Operador "${operatorName}" rechazado - será "No identificado"`);
+              }
               operatorName = 'No identificado';
-            }
-            
-            // Debug: Log solo para operadores que parecen problemáticos
-            if (operatorName !== 'No identificado' && 
-                (/^\d{1,2}:\d{2}/.test(call.operador) || 
-                 call.operador === call.beneficiario || 
-                 call.operador === call.beneficiary)) {
-              console.warn(`🚨 Operador problemático detectado: "${call.operador}" → corregido a: "${operatorName}" de llamada:`, {
-                operadorOriginal: call.operador,
-                beneficiario: call.beneficiario,
-                operadorFinal: operatorName
-              });
+            } else if (index < 5) {
+              console.log(`� [AUDIT CRITICAL] Llamada ${index}: Operador "${operatorName}" ACEPTADO`);
             }
             
             if (!operatorMetrics[operatorName]) {
@@ -261,12 +391,20 @@ const useCallStore = create(
                 tiempoTotal: 0,
                 promedioLlamada: 0
               };
+              console.log('🔍 [AUDIT CRITICAL] Inicializada métrica para:', operatorName);
             }
             
             const metrics = operatorMetrics[operatorName];
             metrics.totalLlamadas++;
-            if (call.categoria === 'exitosa') metrics.llamadasExitosas++;
+            if (call.categoria === 'exitosa' || call.resultado === 'Llamado exitoso') {
+              metrics.llamadasExitosas++;
+            }
             metrics.tiempoTotal += call.duracion || 0;
+          });
+          
+          console.log('🔍 [AUDIT CRITICAL] === OPERADORES FINALES ENCONTRADOS ===');
+          Object.keys(operatorMetrics).forEach((operatorName, index) => {
+            console.log(`${index + 1}. "${operatorName}": ${operatorMetrics[operatorName].totalLlamadas} llamadas`);
           });
           
           // Calcular promedios
@@ -275,7 +413,9 @@ const useCallStore = create(
               Math.round(metrics.tiempoTotal / metrics.totalLlamadas) : 0;
           });
           
-          return Object.values(operatorMetrics);
+          const result = Object.values(operatorMetrics);
+          console.log('🎯 [AUDIT CRITICAL] RESULTADO FINAL:', result.length, 'operadores con métricas');
+          return result;
         }
         
         // Lógica original con operatorAssignments

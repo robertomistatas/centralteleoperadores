@@ -5,6 +5,8 @@ import { useAuth } from './AuthContext';
 import { operatorService, assignmentService, callDataService } from './firestoreService';
 import { useCallStore, useAppStore } from './stores';
 import AuditDemo from './components/examples/AuditDemo';
+import './debug/dataSync.js'; // 🔧 DIAGNÓSTICO: Importar script de testing
+import './debug/auditDiagnosis.js'; // 🔧 DIAGNÓSTICO ESPECÍFICO: Para problema de auditoría
 import ErrorBoundary from './components/ErrorBoundary';
 import ZustandTest from './test/ZustandTest';
 
@@ -1062,6 +1064,18 @@ const TeleasistenciaApp = () => {
   
   // Filtros para historial de seguimientos
   const filteredFollowUps = followUpData.filter(item => {
+    // 🔧 NUEVO: Filtro especial para "No asignados"
+    if (filterStatus === 'no-asignados') {
+      const isNotAssigned = item.operator === 'No Asignado' || 
+                           item.operator === 'Sin asignar' || 
+                           !item.operator || 
+                           item.operator.trim() === '';
+      const matchesSearch = item.beneficiary.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           item.operator.toLowerCase().includes(searchTerm.toLowerCase());
+      return isNotAssigned && matchesSearch;
+    }
+    
+    // Filtros normales por estado
     const matchesFilter = filterStatus === 'all' || item.status === filterStatus;
     const matchesSearch = item.beneficiary.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          item.operator.toLowerCase().includes(searchTerm.toLowerCase());
@@ -1304,10 +1318,95 @@ const TeleasistenciaApp = () => {
       }))
     });
 
+    // 🧪 FUNCIÓN DE TESTING: Generar datos de prueba
+    const generateTestData = () => {
+      console.log('🧪 Generando datos de prueba...');
+      
+      // Crear datos de llamadas de ejemplo
+      const testCallData = [
+        {
+          id: 'test-1',
+          fecha: '14/08/2025',
+          beneficiario: 'Hermes Eduardo Valbuena Romero',
+          comuna: 'Santiago',
+          tipo_llamada: 'saliente',
+          numero_cliente: '987654321',
+          hora: '09:15:00',
+          operador: 'María González',
+          duracion: 180,
+          categoria: 'exitosa',
+          resultado: 'Llamado exitoso',
+          observacion: 'Contacto exitoso, información actualizada',
+          apiId: 'test-api-1'
+        },
+        {
+          id: 'test-2',
+          fecha: '14/08/2025',
+          beneficiario: 'Ana Carolina Pérez Silva',
+          comuna: 'Valparaíso',
+          tipo_llamada: 'saliente',
+          numero_cliente: '987654322',
+          hora: '10:30:00',
+          operador: 'Ana Rodríguez',
+          duracion: 240,
+          categoria: 'exitosa',
+          resultado: 'Llamado exitoso',
+          observacion: 'Beneficiario contactado con éxito',
+          apiId: 'test-api-2'
+        },
+        {
+          id: 'test-3',
+          fecha: '14/08/2025',
+          beneficiario: 'Carlos Roberto Díaz Morales',
+          comuna: 'Concepción',
+          tipo_llamada: 'saliente',
+          numero_cliente: '987654323',
+          hora: '14:45:00',
+          operador: 'Luis Martínez',
+          duracion: 120,
+          categoria: 'fallida',
+          resultado: 'Sin respuesta',
+          observacion: 'No contesta, intentar más tarde',
+          apiId: 'test-api-3'
+        }
+      ];
+      
+      // Cargar datos en Zustand
+      setZustandCallData(testCallData, 'test');
+      
+      console.log('✅ Datos de prueba cargados:', testCallData.length, 'llamadas');
+    };
+
     return (
     <div className="space-y-6">
       {/* Banner de estado de datos */}
       <DataStatusBanner />
+      
+      {/* 🧪 PANEL DE TESTING - Solo en desarrollo */}
+      {import.meta.env.DEV && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold text-yellow-800">🧪 Modo de Desarrollo</h3>
+              <p className="text-sm text-yellow-700">Panel de testing para verificar sincronización de datos</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={generateTestData}
+                className="px-3 py-1 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 transition-colors text-sm"
+              >
+                Generar Datos Test
+              </button>
+              <button
+                onClick={() => window.runDataSyncDiagnostic?.()}
+                className="px-3 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm"
+              >
+                Ejecutar Diagnóstico
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Métricas principales basadas en Zustand */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -1403,7 +1502,7 @@ const TeleasistenciaApp = () => {
         </div>
       </div>
 
-      {/* Detalle por Teleoperadora usando datos de Zustand */}
+      {/* Detalle por Teleoperadora usando datos de Zustand con asignaciones locales */}
       <div className="bg-white rounded-lg shadow-md p-6">
         <h3 className="text-lg font-semibold mb-4">Detalle por Teleoperadora</h3>
         <div className="overflow-x-auto">
@@ -1417,7 +1516,7 @@ const TeleasistenciaApp = () => {
               </tr>
             </thead>
             <tbody>
-              {(getOperatorMetrics && getOperatorMetrics() || []).map((metric, index) => (
+              {(getOperatorMetrics && getOperatorMetrics(operators, operatorAssignments) || []).map((metric, index) => (
                 <tr key={index} className="border-b">
                   <td className="px-4 py-3 text-sm text-gray-900">{metric.operador}</td>
                   <td className="px-4 py-3 text-sm text-gray-900">{metric.totalLlamadas}</td>
@@ -1425,7 +1524,7 @@ const TeleasistenciaApp = () => {
                   <td className="px-4 py-3 text-sm text-gray-900">{Math.round(metric.promedioLlamada / 60)} min</td>
                 </tr>
               ))}
-              {(!getOperatorMetrics || getOperatorMetrics().length === 0) && (
+              {(!getOperatorMetrics || getOperatorMetrics(operators, operatorAssignments).length === 0) && (
                 <tr>
                   <td colSpan="4" className="px-4 py-3 text-sm text-gray-500 text-center">
                     No hay datos de operadores disponibles. Sube un archivo Excel para ver las métricas.
@@ -2023,13 +2122,55 @@ const TeleasistenciaApp = () => {
     </div>
   );
 
-  const FollowUpHistory = () => (
+  const FollowUpHistory = () => {
+    // 📊 NUEVO: Cálculo de métricas mejoradas para el historial
+    const totalBeneficiaries = followUpData.length;
+    const unassignedBeneficiaries = followUpData.filter(item => 
+      item.operator === 'No Asignado' || 
+      item.operator === 'Sin asignar' || 
+      !item.operator || 
+      item.operator.trim() === ''
+    ).length;
+    const assignedBeneficiaries = totalBeneficiaries - unassignedBeneficiaries;
+    const urgentCases = followUpData.filter(item => item.status === 'urgente').length;
+    const pendingCases = followUpData.filter(item => item.status === 'pendiente').length;
+    const upToDateCases = followUpData.filter(item => item.status === 'al-dia').length;
+
+    return (
     <div className="space-y-6">
       <div className="bg-white rounded-lg shadow-md p-6">
         <h3 className="text-lg font-semibold mb-4">Historial de Seguimientos</h3>
         <p className="text-gray-600 mb-6">
           Clasifica beneficiarios por frecuencia y estado de contacto.
         </p>
+        
+        {/* 📊 NUEVO: Métricas mejoradas del historial */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+          <div className="bg-blue-50 rounded-lg p-4 text-center">
+            <div className="text-2xl font-bold text-blue-600">{totalBeneficiaries}</div>
+            <div className="text-sm text-blue-700 font-medium">Total</div>
+          </div>
+          <div className="bg-green-50 rounded-lg p-4 text-center">
+            <div className="text-2xl font-bold text-green-600">{assignedBeneficiaries}</div>
+            <div className="text-sm text-green-700 font-medium">Asignados</div>
+          </div>
+          <div className="bg-orange-50 rounded-lg p-4 text-center">
+            <div className="text-2xl font-bold text-orange-600">{unassignedBeneficiaries}</div>
+            <div className="text-sm text-orange-700 font-medium">No Asignados</div>
+          </div>
+          <div className="bg-green-100 rounded-lg p-4 text-center">
+            <div className="text-2xl font-bold text-green-800">{upToDateCases}</div>
+            <div className="text-sm text-green-800 font-medium">Al día</div>
+          </div>
+          <div className="bg-yellow-50 rounded-lg p-4 text-center">
+            <div className="text-2xl font-bold text-yellow-600">{pendingCases}</div>
+            <div className="text-sm text-yellow-700 font-medium">Pendientes</div>
+          </div>
+          <div className="bg-red-50 rounded-lg p-4 text-center">
+            <div className="text-2xl font-bold text-red-600">{urgentCases}</div>
+            <div className="text-sm text-red-700 font-medium">Urgentes</div>
+          </div>
+        </div>
         
         {/* Filtros */}
         <div className="flex flex-wrap gap-4 mb-6">
@@ -2044,6 +2185,7 @@ const TeleasistenciaApp = () => {
               <option value="al-dia">Al día</option>
               <option value="pendiente">Pendiente</option>
               <option value="urgente">Urgente</option>
+              <option value="no-asignados">No asignados</option>
             </select>
           </div>
           <div className="flex items-center gap-2">
@@ -2057,6 +2199,30 @@ const TeleasistenciaApp = () => {
             />
           </div>
         </div>
+        
+        {/* 🚨 NUEVO: Banner informativo para filtro "No asignados" */}
+        {filterStatus === 'no-asignados' && (
+          <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-orange-500 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <h3 className="text-orange-800 font-medium">Filtro: Beneficiarios No Asignados</h3>
+                <p className="text-orange-700 text-sm mt-1">
+                  Mostrando beneficiarios que no tienen una teleoperadora asignada. 
+                  {unassignedBeneficiaries > 0 ? 
+                    ` Se encontraron ${unassignedBeneficiaries} beneficiarios sin asignar.` :
+                    ' ¡Excelente! Todos los beneficiarios tienen asignación.'
+                  }
+                </p>
+                {unassignedBeneficiaries > 0 && (
+                  <p className="text-orange-600 text-xs mt-2">
+                    💡 Ve al módulo <strong>Asignaciones</strong> para asignar teleoperadoras a estos beneficiarios
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Tarjetas de seguimiento */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -2065,12 +2231,17 @@ const TeleasistenciaApp = () => {
               <div className="flex flex-col items-center">
                 <FileSpreadsheet className="w-12 h-12 text-gray-400 mb-4" />
                 <h4 className="text-lg font-medium text-gray-900 mb-2">
-                  No hay datos de seguimiento
+                  {filterStatus === 'no-asignados' ? 
+                    '¡Excelente! No hay beneficiarios sin asignar' : 
+                    'No hay datos de seguimiento'
+                  }
                 </h4>
                 <p className="text-gray-600 mb-4 max-w-md">
                   {!hasCallData ? 
                     'Para ver el historial de seguimientos, sube un archivo Excel con datos de llamadas desde el Panel Principal.' :
-                    'No se encontraron seguimientos que coincidan con los filtros aplicados.'
+                    filterStatus === 'no-asignados' ?
+                      'Todos los beneficiarios tienen una teleoperadora asignada. Puedes gestionar las asignaciones desde el módulo "Asignaciones".' :
+                      'No se encontraron seguimientos que coincidan con los filtros aplicados.'
                   }
                 </p>
                 {!hasCallData && (
@@ -2078,11 +2249,28 @@ const TeleasistenciaApp = () => {
                     💡 Ve al <strong>Panel Principal</strong> → <strong>Cargar Excel</strong> para comenzar
                   </div>
                 )}
+                {filterStatus === 'no-asignados' && hasCallData && (
+                  <div className="text-sm text-green-600">
+                    ✅ Todas las asignaciones están completas
+                  </div>
+                )}
               </div>
             </div>
           ) : (
-            filteredFollowUps.map((item) => (
-            <div key={item.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
+            filteredFollowUps.map((item) => {
+              // 🔧 NUEVO: Identificar si el beneficiario no está asignado
+              const isUnassigned = item.operator === 'No Asignado' || 
+                                 item.operator === 'Sin asignar' || 
+                                 !item.operator || 
+                                 item.operator.trim() === '';
+              
+              return (
+            <div 
+              key={item.id} 
+              className={`border rounded-lg p-4 hover:shadow-md transition-shadow ${
+                isUnassigned ? 'border-orange-200 bg-orange-50' : ''
+              }`}
+            >
               <div className="flex items-start justify-between mb-2">
                 <h4 className="font-medium text-gray-900">{item.beneficiary}</h4>
                 <span className={`px-2 py-1 rounded-full text-xs font-medium ${
@@ -2096,8 +2284,15 @@ const TeleasistenciaApp = () => {
                    item.status === 'pendiente' ? 'Pendiente' : 'Urgente'}
                 </span>
               </div>
-              <p className="text-sm text-gray-600 mb-2">
-                Teleoperadora: {item.operator}
+              <p className={`text-sm mb-2 ${
+                isUnassigned ? 'text-orange-700 font-medium' : 'text-gray-600'
+              }`}>
+                Teleoperadora: {isUnassigned ? (
+                  <span className="flex items-center gap-1">
+                    <AlertCircle className="w-4 h-4" />
+                    {item.operator}
+                  </span>
+                ) : item.operator}
               </p>
               <p className="text-sm text-gray-600 mb-2">
                 Última llamada: {item.lastCall}
@@ -2115,11 +2310,13 @@ const TeleasistenciaApp = () => {
                 </div>
               )}
             </div>
-          )))}
+          );
+          }))}
         </div>
       </div>
     </div>
   );
+  };
 
   return (
     <div className="flex h-screen bg-gray-100">
