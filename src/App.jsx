@@ -1161,6 +1161,9 @@ const TeleasistenciaApp = () => {
 
   // Componente de estado de datos
   const DataStatusBanner = () => {
+    // Usar zustandCallData como prioridad, callData local como respaldo
+    const effectiveCallData = zustandCallData?.length > 0 ? zustandCallData : callData;
+    
     const getStatusInfo = () => {
       if (firebaseStatus === 'connecting') {
         return {
@@ -1172,12 +1175,12 @@ const TeleasistenciaApp = () => {
       }
       
       if (firebaseStatus === 'connected') {
-        if (callData.length > 0) {
+        if (effectiveCallData.length > 0) {
           return {
             color: 'bg-green-50 border-green-200',
             icon: '✅',
             title: 'Datos reales activos',
-            message: `Mostrando datos reales de ${callData.length} llamadas registradas`
+            message: `Mostrando datos reales de ${effectiveCallData.length} llamadas registradas`
           };
         } else {
           return {
@@ -1231,6 +1234,14 @@ const TeleasistenciaApp = () => {
   };
 
   const Dashboard = () => {
+    // 🔧 SINCRONIZACIÓN: Si Zustand no tiene datos pero el estado local sí, sincronizar
+    React.useEffect(() => {
+      if (callData.length > 0 && (!zustandCallData || zustandCallData.length === 0)) {
+        console.log('🔄 Sincronizando datos locales con Zustand:', callData.length);
+        setZustandCallData(callData, 'sync');
+      }
+    }, [callData, zustandCallData, setZustandCallData]);
+
     // ✅ USAR MÉTRICAS DE ZUSTAND EN LUGAR DE ESTADO LOCAL
     const metrics = zustandCallMetrics || {
       totalCalls: 0,
@@ -1241,141 +1252,336 @@ const TeleasistenciaApp = () => {
       protocolCompliance: 0
     };
 
+    // 🔧 DEBUG: Verificar estado de las métricas
+    console.log('🎯 Dashboard - zustandCallMetrics:', zustandCallMetrics);
+    console.log('📊 Dashboard - zustandCallData length:', zustandCallData?.length || 0);
+    console.log('📋 Dashboard - callData local length:', callData?.length || 0);
+    console.log('📈 Dashboard - metrics usado:', metrics);
+
     const operatorCount = zustandOperators.length;
     const activeAssignments = zustandOperatorAssignments ? Object.keys(zustandOperatorAssignments).length : 0;
 
+    // 📊 ANÁLISIS AVANZADO - Cálculos adicionales para Dashboard mejorado
+    const operatorMetrics = getOperatorMetrics(assignmentsToUse);
+    const hourlyDistribution = getHourlyDistribution();
+    
+    // Cálculos de rendimiento avanzados
+    const successRate = metrics.totalCalls > 0 ? ((metrics.successfulCalls / metrics.totalCalls) * 100).toFixed(1) : 0;
+    const failureRate = metrics.totalCalls > 0 ? ((metrics.failedCalls / metrics.totalCalls) * 100).toFixed(1) : 0;
+    const avgCallsPerOperator = operatorCount > 0 ? (metrics.totalCalls / operatorCount).toFixed(1) : 0;
+    const contactabilityRate = metrics.uniqueBeneficiaries > 0 ? ((metrics.successfulCalls / metrics.uniqueBeneficiaries) * 100).toFixed(1) : 0;
+
+    // Top performers y análisis de rendimiento
+    const topPerformers = operatorMetrics
+      .sort((a, b) => b.successfulCalls - a.successfulCalls)
+      .slice(0, 3);
+
+    const operatorWithMostCalls = operatorMetrics
+      .sort((a, b) => b.totalCalls - a.totalCalls)[0];
+
     return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Banner de estado de datos */}
       <DataStatusBanner />
       
-      {/* Métricas principales basadas en Zustand */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <MetricCard
-          title="Llamadas totales"
-          value={metrics.totalCalls}
-          subtitle="Análisis en tiempo real con Zustand"
-          icon={Phone}
-          color="blue"
-        />
-        <MetricCard
-          title="Llamadas exitosas"
-          value={metrics.successfulCalls}
-          subtitle="Llamadas con resultado exitoso"
-          icon={Phone}
-          trend={1}
-          color="green"
-        />
-        <MetricCard
-          title="Llamadas no exitosas"
-          value={metrics.failedCalls}
-          subtitle="No contestadas, fallidas u otro"
-          icon={Phone}
-          trend={-1}
-          color="red"
-        />
-        <MetricCard
-          title="Beneficiarios únicos"
-          value={metrics.uniqueBeneficiaries}
-          subtitle="Personas contactadas únicas"
-          icon={Users}
-          color="purple"
-        />
-      </div>
-
-      {/* Métricas secundarias */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <MetricCard
-          title="Asignaciones activas"
-          value={activeAssignments}
-          subtitle="Relaciones vigentes beneficiario-teleoperadora"
-          icon={Users}
-          color="blue"
-        />
-        <MetricCard
-          title="Teleoperadoras"
-          value={operatorCount}
-          subtitle="Operadoras registradas en el sistema"
-          icon={Users}
-          color="blue"
-        />
-        <MetricCard
-          title="Cumplimiento de protocolo"
-          value={`${metrics.protocolCompliance}%`}
-          subtitle="Adherencia a procedimientos establecidos"
-          icon={BarChart3}
-          color="green"
-        />
-        <MetricCard
-          title="Duración promedio"
-          value={`${Math.round(metrics.averageDuration / 60)}min`}
-          subtitle="Tiempo promedio por llamada"
-          icon={Clock}
-          color="orange"
-        />
-      </div>
-
-      {/* Módulos principales */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h3 className="text-lg font-semibold mb-6">Módulos principales</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <ModuleCard
-            title="Registro de Llamadas"
-            description="Sube historiales, analiza resultados y clasifica por beneficiario y teleoperadora."
-            icon={Phone}
-            color="green"
-            onClick={() => setActiveTab('calls')}
-          />
-          <ModuleCard
-            title="Asignaciones"
-            description="Gestiona relaciones entre beneficiarios y teleoperadoras."
-            icon={Users}
-            color="blue"
-            onClick={() => setActiveTab('assignments')}
-          />
-          <ModuleCard
-            title="Historial de Seguimientos"
-            description="Clasifica beneficiarios por frecuencia y estado de contacto."
-            icon={Clock}
-            color="orange"
-            onClick={() => setActiveTab('history')}
-          />
+      {/* 🎯 RESUMEN EJECUTIVO - Similar a análisis de IA */}
+      <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl p-6 text-white">
+        <h2 className="text-2xl font-bold mb-4">📊 Resumen Ejecutivo de Teleasistencia</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-white/10 rounded-lg p-4">
+            <div className="text-3xl font-bold">{successRate}%</div>
+            <div className="text-sm opacity-90">Tasa de Éxito</div>
+          </div>
+          <div className="bg-white/10 rounded-lg p-4">
+            <div className="text-3xl font-bold">{metrics.uniqueBeneficiaries}</div>
+            <div className="text-sm opacity-90">Beneficiarios Atendidos</div>
+          </div>
+          <div className="bg-white/10 rounded-lg p-4">
+            <div className="text-3xl font-bold">{avgCallsPerOperator}</div>
+            <div className="text-sm opacity-90">Llamadas por Operadora</div>
+          </div>
+          <div className="bg-white/10 rounded-lg p-4">
+            <div className="text-3xl font-bold">{contactabilityRate}%</div>
+            <div className="text-sm opacity-90">Tasa de Contactabilidad</div>
+          </div>
         </div>
       </div>
 
-      {/* Detalle por Teleoperadora usando datos de Zustand */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h3 className="text-lg font-semibold mb-4">Detalle por Teleoperadora</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-gray-50">
-                <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Teleoperadora</th>
-                <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Cantidad de llamados</th>
-                <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Minutos totales</th>
-                <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Tiempo promedio</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(getOperatorMetrics && getOperatorMetrics() || []).map((metric, index) => (
-                <tr key={index} className="border-b">
-                  <td className="px-4 py-3 text-sm text-gray-900">{metric.operador}</td>
-                  <td className="px-4 py-3 text-sm text-gray-900">{metric.totalLlamadas}</td>
-                  <td className="px-4 py-3 text-sm text-gray-900">{Math.round(metric.tiempoTotal / 60)} min</td>
-                  <td className="px-4 py-3 text-sm text-gray-900">{Math.round(metric.promedioLlamada / 60)} min</td>
-                </tr>
+      {/* 📈 MÉTRICAS PRINCIPALES CON ANÁLISIS PROFUNDO */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="bg-white rounded-xl shadow-lg p-6 border-l-4 border-green-500">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-medium text-gray-600">Llamadas Exitosas</h3>
+              <p className="text-3xl font-bold text-green-600">{metrics.successfulCalls}</p>
+              <p className="text-sm text-gray-500">de {metrics.totalCalls} total</p>
+            </div>
+            <div className="p-3 bg-green-100 rounded-full">
+              <Phone className="h-8 w-8 text-green-600" />
+            </div>
+          </div>
+          <div className="mt-4 pt-4 border-t">
+            <div className="flex items-center text-sm">
+              <TrendingUp className="h-4 w-4 text-green-500 mr-1" />
+              <span className="text-green-600 font-medium">{successRate}% de éxito</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-lg p-6 border-l-4 border-red-500">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-medium text-gray-600">Llamadas Fallidas</h3>
+              <p className="text-3xl font-bold text-red-600">{metrics.failedCalls}</p>
+              <p className="text-sm text-gray-500">sin contacto efectivo</p>
+            </div>
+            <div className="p-3 bg-red-100 rounded-full">
+              <Phone className="h-8 w-8 text-red-600" />
+            </div>
+          </div>
+          <div className="mt-4 pt-4 border-t">
+            <div className="flex items-center text-sm">
+              <TrendingDown className="h-4 w-4 text-red-500 mr-1" />
+              <span className="text-red-600 font-medium">{failureRate}% de fallas</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-lg p-6 border-l-4 border-blue-500">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-medium text-gray-600">Beneficiarios Únicos</h3>
+              <p className="text-3xl font-bold text-blue-600">{metrics.uniqueBeneficiaries}</p>
+              <p className="text-sm text-gray-500">personas atendidas</p>
+            </div>
+            <div className="p-3 bg-blue-100 rounded-full">
+              <Users className="h-8 w-8 text-blue-600" />
+            </div>
+          </div>
+          <div className="mt-4 pt-4 border-t">
+            <div className="flex items-center text-sm">
+              <Users className="h-4 w-4 text-blue-500 mr-1" />
+              <span className="text-blue-600 font-medium">Cobertura poblacional</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-lg p-6 border-l-4 border-purple-500">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-medium text-gray-600">Tiempo Promedio</h3>
+              <p className="text-3xl font-bold text-purple-600">{Math.round(metrics.averageDuration / 60)}min</p>
+              <p className="text-sm text-gray-500">por llamada</p>
+            </div>
+            <div className="p-3 bg-purple-100 rounded-full">
+              <Clock className="h-8 w-8 text-purple-600" />
+            </div>
+          </div>
+          <div className="mt-4 pt-4 border-t">
+            <div className="flex items-center text-sm">
+              <Clock className="h-4 w-4 text-purple-500 mr-1" />
+              <span className="text-purple-600 font-medium">Eficiencia temporal</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 🏆 ANÁLISIS DE RENDIMIENTO POR OPERADORA */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Top Performers */}
+        <div className="bg-white rounded-xl shadow-lg p-6">
+          <h3 className="text-lg font-semibold mb-4 flex items-center">
+            <TrendingUp className="h-5 w-5 text-green-500 mr-2" />
+            🏆 Top Performers
+          </h3>
+          {topPerformers.length > 0 ? (
+            <div className="space-y-3">
+              {topPerformers.map((operator, index) => (
+                <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div className="flex items-center">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold mr-3 ${
+                      index === 0 ? 'bg-yellow-500' : index === 1 ? 'bg-gray-400' : 'bg-orange-500'
+                    }`}>
+                      {index + 1}
+                    </div>
+                    <div>
+                      <p className="font-medium">{operator.operatorName}</p>
+                      <p className="text-sm text-gray-500">{operator.totalCalls} llamadas</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-green-600">{operator.successfulCalls}</p>
+                    <p className="text-sm text-gray-500">exitosas</p>
+                  </div>
+                </div>
               ))}
-              {(!getOperatorMetrics || getOperatorMetrics().length === 0) && (
-                <tr>
-                  <td colSpan="4" className="px-4 py-3 text-sm text-gray-500 text-center">
-                    No hay datos de operadores disponibles. Sube un archivo Excel para ver las métricas.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+            </div>
+          ) : (
+            <p className="text-gray-500 text-center py-4">No hay datos de operadoras disponibles</p>
+          )}
+        </div>
+
+        {/* Análisis de Productividad */}
+        <div className="bg-white rounded-xl shadow-lg p-6">
+          <h3 className="text-lg font-semibold mb-4 flex items-center">
+            <BarChart3 className="h-5 w-5 text-blue-500 mr-2" />
+            📊 Análisis de Productividad
+          </h3>
+          <div className="space-y-4">
+            <div className="p-4 bg-blue-50 rounded-lg">
+              <p className="text-sm text-gray-600">Operadora más activa</p>
+              <p className="font-bold text-lg">{operatorWithMostCalls?.operatorName || 'N/A'}</p>
+              <p className="text-sm text-blue-600">{operatorWithMostCalls?.totalCalls || 0} llamadas realizadas</p>
+            </div>
+            <div className="p-4 bg-green-50 rounded-lg">
+              <p className="text-sm text-gray-600">Tasa de éxito promedio</p>
+              <p className="font-bold text-lg">{successRate}%</p>
+              <p className="text-sm text-green-600">Indicador de calidad del servicio</p>
+            </div>
+            <div className="p-4 bg-purple-50 rounded-lg">
+              <p className="text-sm text-gray-600">Cumplimiento de protocolo</p>
+              <p className="font-bold text-lg">{metrics.protocolCompliance}%</p>
+              <p className="text-sm text-purple-600">Adherencia a procedimientos</p>
+            </div>
+          </div>
         </div>
       </div>
+
+      {/* 🚀 MÓDULOS DE ACCESO RÁPIDO */}
+      <div className="bg-white rounded-xl shadow-lg p-6">
+        <h3 className="text-lg font-semibold mb-6">🚀 Acceso Rápido a Módulos</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div 
+            onClick={() => setActiveTab('calls')}
+            className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-6 border border-green-200 cursor-pointer hover:shadow-md transition-all"
+          >
+            <div className="flex items-center justify-center mb-4">
+              <div className="w-16 h-16 bg-green-500 rounded-lg flex items-center justify-center">
+                <Phone className="w-8 h-8 text-white" />
+              </div>
+            </div>
+            <h4 className="text-lg font-semibold text-green-800 mb-2">Registro de Llamadas</h4>
+            <p className="text-sm text-green-700">Sube historiales Excel, analiza resultados y clasifica por beneficiario y teleoperadora.</p>
+          </div>
+          
+          <div 
+            onClick={() => setActiveTab('assignments')}
+            className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-6 border border-blue-200 cursor-pointer hover:shadow-md transition-all"
+          >
+            <div className="flex items-center justify-center mb-4">
+              <div className="w-16 h-16 bg-blue-500 rounded-lg flex items-center justify-center">
+                <Users className="w-8 h-8 text-white" />
+              </div>
+            </div>
+            <h4 className="text-lg font-semibold text-blue-800 mb-2">Asignaciones</h4>
+            <p className="text-sm text-blue-700">Gestiona relaciones entre beneficiarios y teleoperadoras de manera eficiente.</p>
+          </div>
+          
+          <div 
+            onClick={() => setActiveTab('history')}
+            className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-6 border border-purple-200 cursor-pointer hover:shadow-md transition-all"
+          >
+            <div className="flex items-center justify-center mb-4">
+              <div className="w-16 h-16 bg-purple-500 rounded-lg flex items-center justify-center">
+                <Clock className="w-8 h-8 text-white" />
+              </div>
+            </div>
+            <h4 className="text-lg font-semibold text-purple-800 mb-2">Historial de Seguimientos</h4>
+            <p className="text-sm text-purple-700">Clasifica beneficiarios por frecuencia y estado de contacto para seguimiento.</p>
+          </div>
+        </div>
+      </div>
+
+      {/* 📊 TABLA DETALLADA DE OPERADORAS */}
+      {operatorMetrics.length > 0 && (
+        <div className="bg-white rounded-xl shadow-lg p-6">
+          <h3 className="text-lg font-semibold mb-4 flex items-center">
+            <Users className="h-5 w-5 text-indigo-500 mr-2" />
+            📊 Detalle Completo por Teleoperadora
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Operadora
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Total Llamadas
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Exitosas
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Fallidas
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Tasa Éxito
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Rendimiento
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {operatorMetrics.map((operator, index) => {
+                  const operatorSuccessRate = operator.totalCalls > 0 ? ((operator.successfulCalls / operator.totalCalls) * 100).toFixed(1) : 0;
+                  return (
+                    <tr key={index} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center mr-3">
+                            <span className="text-indigo-600 font-semibold text-sm">
+                              {operator.operatorName?.substring(0, 2).toUpperCase()}
+                            </span>
+                          </div>
+                          <span className="text-sm font-medium text-gray-900">{operator.operatorName}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                          {operator.totalCalls}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-medium">
+                        {operator.successfulCalls}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-red-600 font-medium">
+                        {operator.failedCalls}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          parseFloat(operatorSuccessRate) >= 70 ? 'bg-green-100 text-green-800' : 
+                          parseFloat(operatorSuccessRate) >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+                        }`}>
+                          {operatorSuccessRate}%
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <div className="w-16 bg-gray-200 rounded-full h-2 mr-2">
+                            <div 
+                              className={`h-2 rounded-full ${
+                                parseFloat(operatorSuccessRate) >= 70 ? 'bg-green-500' : 
+                                parseFloat(operatorSuccessRate) >= 50 ? 'bg-yellow-500' : 'bg-red-500'
+                              }`}
+                              style={{ width: `${Math.min(parseFloat(operatorSuccessRate), 100)}%` }}
+                            ></div>
+                          </div>
+                          <span className="text-xs text-gray-500">
+                            {parseFloat(operatorSuccessRate) >= 70 ? '🎯 Excelente' : 
+                             parseFloat(operatorSuccessRate) >= 50 ? '⚠️ Regular' : '📉 Revisar'}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
     );
   };
@@ -1971,6 +2177,49 @@ const TeleasistenciaApp = () => {
           Clasifica beneficiarios por frecuencia y estado de contacto.
         </p>
         
+        {/* Estadísticas de seguimiento */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-green-800 font-semibold">Al día</p>
+                <p className="text-2xl font-bold text-green-600">
+                  {followUpData.filter(f => f.status === 'al-dia').length}
+                </p>
+              </div>
+              <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
+                <span className="text-white text-sm">✓</span>
+              </div>
+            </div>
+          </div>
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-yellow-800 font-semibold">Pendientes</p>
+                <p className="text-2xl font-bold text-yellow-600">
+                  {followUpData.filter(f => f.status === 'pendiente').length}
+                </p>
+              </div>
+              <div className="w-8 h-8 bg-yellow-500 rounded-full flex items-center justify-center">
+                <span className="text-white text-sm">⏳</span>
+              </div>
+            </div>
+          </div>
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-red-800 font-semibold">Urgentes</p>
+                <p className="text-2xl font-bold text-red-600">
+                  {followUpData.filter(f => f.status === 'urgente').length}
+                </p>
+              </div>
+              <div className="w-8 h-8 bg-red-500 rounded-full flex items-center justify-center">
+                <span className="text-white text-sm">⚠</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Filtros */}
         <div className="flex flex-wrap gap-4 mb-6">
           <div className="flex items-center gap-2">
@@ -2022,36 +2271,76 @@ const TeleasistenciaApp = () => {
             </div>
           ) : (
             filteredFollowUps.map((item) => (
-            <div key={item.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
-              <div className="flex items-start justify-between mb-2">
-                <h4 className="font-medium text-gray-900">{item.beneficiary}</h4>
-                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+            <div key={item.id} className={`border-2 rounded-lg p-4 hover:shadow-md transition-shadow ${
+              item.status === 'al-dia' ? 'border-green-200 bg-green-50' :
+              item.status === 'pendiente' ? 'border-yellow-200 bg-yellow-50' :
+              'border-red-200 bg-red-50'
+            }`}>
+              <div className="flex items-start justify-between mb-3">
+                <h4 className="font-semibold text-gray-900">{item.beneficiary}</h4>
+                <span className={`px-3 py-1 rounded-full text-xs font-medium ${
                   item.status === 'al-dia' 
-                    ? 'bg-green-100 text-green-800'
+                    ? 'bg-green-100 text-green-800 border border-green-300'
                     : item.status === 'pendiente'
-                    ? 'bg-yellow-100 text-yellow-800'
-                    : 'bg-red-100 text-red-800'
+                    ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
+                    : 'bg-red-100 text-red-800 border border-red-300'
                 }`}>
-                  {item.status === 'al-dia' ? 'Al día' : 
-                   item.status === 'pendiente' ? 'Pendiente' : 'Urgente'}
+                  {item.status === 'al-dia' ? '✅ Al día' : 
+                   item.status === 'pendiente' ? '⏳ Pendiente' : '⚠️ Urgente'}
                 </span>
               </div>
-              <p className="text-sm text-gray-600 mb-2">
-                Teleoperadora: {item.operator}
-              </p>
-              <p className="text-sm text-gray-600 mb-2">
-                Última llamada: {item.lastCall}
-              </p>
-              <p className="text-sm text-gray-600 mb-2">
-                Total llamadas: {item.callCount}
-              </p>
-              <p className="text-sm text-gray-600">
-                Teléfono: {item.phone}
-              </p>
-              {item.status === 'urgente' && (
-                <div className="mt-2 flex items-center text-red-600 text-sm">
-                  <AlertCircle className="w-4 h-4 mr-1" />
-                  Requiere atención inmediata
+              
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center text-gray-700">
+                  <User className="w-4 h-4 mr-2 text-gray-500" />
+                  <span className="font-medium">Teleoperadora:</span>
+                  <span className="ml-1">{item.operator}</span>
+                </div>
+                
+                <div className="flex items-center text-gray-700">
+                  <Phone className="w-4 h-4 mr-2 text-gray-500" />
+                  <span className="font-medium">Teléfono:</span>
+                  <span className="ml-1">{item.phone}</span>
+                </div>
+                
+                <div className="flex items-center text-gray-700">
+                  <Clock className="w-4 h-4 mr-2 text-gray-500" />
+                  <span className="font-medium">Última llamada:</span>
+                  <span className="ml-1">{item.lastCall}</span>
+                </div>
+                
+                <div className="flex items-center text-gray-700">
+                  <BarChart3 className="w-4 h-4 mr-2 text-gray-500" />
+                  <span className="font-medium">Llamadas:</span>
+                  <span className="ml-1">{item.callCount} total ({item.successfulCallCount || 0} exitosas)</span>
+                </div>
+                
+                {item.daysSinceLastCall !== null && (
+                  <div className="flex items-center text-gray-700">
+                    <Calendar className="w-4 h-4 mr-2 text-gray-500" />
+                    <span className="font-medium">Hace:</span>
+                    <span className="ml-1">{item.daysSinceLastCall} días</span>
+                  </div>
+                )}
+                
+                {item.lastCallResult && item.lastCallResult !== 'Sin resultado' && (
+                  <div className="mt-2 p-2 bg-gray-100 rounded text-xs">
+                    <span className="font-medium">Último resultado:</span>
+                    <span className="ml-1">{item.lastCallResult}</span>
+                  </div>
+                )}
+              </div>
+              
+              {item.statusReason && (
+                <div className={`mt-3 p-2 rounded text-xs ${
+                  item.status === 'al-dia' ? 'bg-green-100 text-green-700' :
+                  item.status === 'pendiente' ? 'bg-yellow-100 text-yellow-700' :
+                  'bg-red-100 text-red-700'
+                }`}>
+                  <div className="flex items-start">
+                    {item.status === 'urgente' && <AlertCircle className="w-3 h-3 mr-1 mt-0.5 flex-shrink-0" />}
+                    <span>{item.statusReason}</span>
+                  </div>
                 </div>
               )}
             </div>

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { operatorService, assignmentService } from '../firestoreService';
 
 /**
  * Store para manejo de datos de la aplicación de auditoría
@@ -134,6 +135,61 @@ const useAppStore = create(
         const { operatorAssignments } = get();
         return Object.values(operatorAssignments)
           .reduce((total, assignments) => total + (assignments?.length || 0), 0);
+      },
+
+      // 🔄 Funciones de carga desde Firebase (agregadas para corregir error)
+      loadOperators: async () => {
+        try {
+          set({ isLoading: true });
+          console.log('📥 Cargando operadores desde Firebase...');
+          
+          const operators = await operatorService.getAll();
+          console.log('✅ Operadores cargados:', operators.length);
+          
+          set({ 
+            operators: operators || [],
+            isLoading: false
+          });
+          
+          return operators;
+        } catch (error) {
+          console.error('❌ Error cargando operadores:', error);
+          set({ isLoading: false });
+          return []; // Retornar array vacío en caso de error
+        }
+      },
+
+      loadAssignments: async () => {
+        try {
+          set({ isLoading: true });
+          console.log('📥 Cargando asignaciones desde Firebase...');
+          
+          const assignments = await assignmentService.getAll();
+          console.log('✅ Asignaciones cargadas:', assignments.length);
+          
+          // Agrupar asignaciones por operador
+          const groupedAssignments = {};
+          assignments.forEach(assignment => {
+            if (assignment.operatorId) {
+              if (!groupedAssignments[assignment.operatorId]) {
+                groupedAssignments[assignment.operatorId] = [];
+              }
+              groupedAssignments[assignment.operatorId].push(assignment);
+            }
+          });
+          
+          set({ 
+            operatorAssignments: groupedAssignments,
+            isLoading: false
+          });
+          
+          console.log('📊 Asignaciones agrupadas por operador:', Object.keys(groupedAssignments).length);
+          return assignments;
+        } catch (error) {
+          console.error('❌ Error cargando asignaciones:', error);
+          set({ isLoading: false });
+          return []; // Retornar array vacío en caso de error
+        }
       },
 
       // Acciones de limpieza

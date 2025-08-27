@@ -195,8 +195,191 @@ const useCallStore = create(
         });
       },
 
-      // Análisis específicos para auditoría
+      // 🚀 SISTEMA ROBUSTO: Conexión Asignaciones ↔ Llamadas por Teléfono
       getOperatorMetrics: (operatorAssignments = null) => {
+        try {
+          const { callData } = get();
+          
+          console.log('🔍 SISTEMA ROBUSTO - Análisis por teléfono:');
+          console.log('- callData length:', callData?.length || 0);
+          console.log('- operatorAssignments length:', operatorAssignments?.length || 0);
+          
+          if (!callData || callData.length === 0) {
+            console.log('❌ No hay datos de llamadas');
+            return [];
+          }
+
+          if (!operatorAssignments || !Array.isArray(operatorAssignments) || operatorAssignments.length === 0) {
+            console.log('❌ No hay asignaciones válidas');
+            return [];
+          }
+
+          // 🔑 PASO 1: Crear mapa de teléfono → operadora
+          const phoneToOperator = {};
+          let totalPhonesProcessed = 0;
+          
+          operatorAssignments.forEach(assignment => {
+            const operatorName = assignment.operator || assignment.operatorName || 'Sin Asignar';
+            
+            // Extraer todos los números posibles de cada asignación
+            const phones = [];
+            
+            // Números individuales
+            if (assignment.phone) phones.push(assignment.phone);
+            if (assignment.primaryPhone) phones.push(assignment.primaryPhone);
+            if (assignment.telefono) phones.push(assignment.telefono);
+            if (assignment.numero_cliente) phones.push(assignment.numero_cliente);
+            
+            // Array de teléfonos
+            if (assignment.phones && Array.isArray(assignment.phones)) {
+              phones.push(...assignment.phones);
+            }
+            
+            // Teléfonos separados por punto y coma
+            if (assignment.phone && assignment.phone.includes(';')) {
+              phones.push(...assignment.phone.split(';').map(p => p.trim()));
+            }
+            if (assignment.primaryPhone && assignment.primaryPhone.includes(';')) {
+              phones.push(...assignment.primaryPhone.split(';').map(p => p.trim()));
+            }
+            
+            // Procesar cada teléfono
+            phones.forEach(phone => {
+              if (phone && phone !== 'N/A' && phone.trim()) {
+                const cleanPhone = phone.toString().replace(/[^\d]/g, ''); // Solo números
+                if (cleanPhone.length >= 8) { // Mínimo 8 dígitos
+                  const phoneKey = cleanPhone.slice(-8); // Últimos 8 dígitos para normalizar
+                  phoneToOperator[phoneKey] = operatorName;
+                  totalPhonesProcessed++;
+                }
+              }
+            });
+          });
+          
+          console.log(`� Teléfonos procesados: ${totalPhonesProcessed}`);
+          console.log(`📱 Mapa teléfono-operadora creado con ${Object.keys(phoneToOperator).length} entradas`);
+          console.log('📋 Primeros 5 mapeos:', Object.entries(phoneToOperator).slice(0, 5));
+
+          // 🔑 PASO 2: Inicializar métricas por operadora
+          const operatorNames = [...new Set(Object.values(phoneToOperator))];
+          const operatorMetrics = {};
+          
+          operatorNames.forEach(operatorName => {
+            operatorMetrics[operatorName] = {
+              operatorName,
+              totalCalls: 0,
+              successfulCalls: 0,
+              failedCalls: 0,
+              totalDuration: 0,
+              matchedCalls: 0 // Para debugging
+            };
+          });
+          
+          console.log(`👩‍💼 Operadoras inicializadas: ${operatorNames.join(', ')}`);
+
+          // 🔑 PASO 3: Analizar cada llamada y asignar a operadora
+          let callsMatched = 0;
+          let callsUnmatched = 0;
+          
+          callData.forEach((call, index) => {
+            // Extraer número de la llamada
+            const callPhone = call.phone || call.telefono || call.numero || call.numero_cliente || call.numero_telefono || '';
+            
+            if (callPhone && callPhone.trim()) {
+              const cleanCallPhone = callPhone.toString().replace(/[^\d]/g, '');
+              
+              if (cleanCallPhone.length >= 8) {
+                const phoneKey = cleanCallPhone.slice(-8);
+                const assignedOperator = phoneToOperator[phoneKey];
+                
+                if (assignedOperator && operatorMetrics[assignedOperator]) {
+                  callsMatched++;
+                  const metrics = operatorMetrics[assignedOperator];
+                  metrics.totalCalls++;
+                  metrics.matchedCalls++;
+                  
+                  // Analizar duración
+                  const duration = parseInt(call.duration || call.duracion || 0);
+                  metrics.totalDuration += duration;
+                  
+                  // Analizar resultado de la llamada
+                  const result = (call.result || call.resultado || call.estado || '').toLowerCase();
+                  const isSuccessful = result.includes('exitosa') || result.includes('exitoso') || 
+                                     result.includes('contactado') || result.includes('atendida') ||
+                                     result.includes('respuesta') || result.includes('contesto') ||
+                                     result.includes('completada') || result.includes('respondio');
+                  
+                  if (isSuccessful) {
+                    metrics.successfulCalls++;
+                  } else {
+                    metrics.failedCalls++;
+                  }
+                  
+                  // Log cada 500 llamadas procesadas
+                  if (index % 500 === 0) {
+                    console.log(`📞 Procesando llamada ${index}: ${callPhone} → ${assignedOperator}`);
+                  }
+                } else {
+                  callsUnmatched++;
+                  if (callsUnmatched <= 5) { // Solo mostrar los primeros 5 no coincidentes
+                    console.log(`❓ Llamada sin asignación: ${callPhone} (${phoneKey})`);
+                  }
+                }
+              }
+            }
+          });
+          
+          console.log(`📊 RESULTADOS DEL PROCESAMIENTO:`);
+          console.log(`- Total llamadas: ${callData.length}`);
+          console.log(`- Llamadas coincidentes: ${callsMatched}`);
+          console.log(`- Llamadas sin asignación: ${callsUnmatched}`);
+          console.log(`- Porcentaje de cobertura: ${((callsMatched / callData.length) * 100).toFixed(1)}%`);
+
+          // 🔑 PASO 4: Generar resultado final con verificación matemática
+          const result = Object.values(operatorMetrics)
+            .filter(metrics => metrics.totalCalls > 0)
+            .map(metrics => ({
+              operatorName: metrics.operatorName,
+              totalCalls: metrics.totalCalls,
+              successfulCalls: metrics.successfulCalls,
+              failedCalls: metrics.failedCalls,
+              averageDuration: metrics.totalCalls > 0 ? 
+                Math.round(metrics.totalDuration / metrics.totalCalls) : 0,
+              successRate: metrics.totalCalls > 0 ? 
+                Math.round((metrics.successfulCalls / metrics.totalCalls) * 100) : 0,
+              matchedCalls: metrics.matchedCalls // Para debugging
+            }))
+            .sort((a, b) => b.totalCalls - a.totalCalls);
+
+          // 🔍 VERIFICACIÓN MATEMÁTICA FINAL
+          const totalOperatorCalls = result.reduce((sum, op) => sum + op.totalCalls, 0);
+          const totalOperatorSuccess = result.reduce((sum, op) => sum + op.successfulCalls, 0);
+          const totalOperatorFailed = result.reduce((sum, op) => sum + op.failedCalls, 0);
+          
+          console.log(`\n✅ VERIFICACIÓN MATEMÁTICA:`);
+          console.log(`- Total sistema: ${callData.length} llamadas`);
+          console.log(`- Total operadoras: ${totalOperatorCalls} llamadas`);
+          console.log(`- Exitosas operadoras: ${totalOperatorSuccess}`);
+          console.log(`- Fallidas operadoras: ${totalOperatorFailed}`);
+          console.log(`- Suma verifica: ${totalOperatorSuccess + totalOperatorFailed === totalOperatorCalls ? '✅' : '❌'}`);
+          console.log(`- Cobertura: ${((totalOperatorCalls / callData.length) * 100).toFixed(1)}%`);
+          
+          console.log(`\n📋 MÉTRICAS FINALES POR OPERADORA:`);
+          result.forEach(op => {
+            console.log(`- ${op.operatorName}: ${op.totalCalls} llamadas, ${op.successfulCalls} exitosas (${op.successRate}%), ${op.failedCalls} fallidas`);
+          });
+
+          return result;
+
+        } catch (error) {
+          console.error('❌ Error en getOperatorMetrics:', error);
+          console.error('Stack trace:', error.stack);
+          return [];
+        }
+      },
+
+      // FUNCIÓN ANTERIOR PRESERVADA COMO FALLBACK
+      getOperatorMetricsOld: (operatorAssignments = null) => {
         const { processedData } = get();
         
         // Si no se proporciona operatorAssignments, usar los datos procesados directamente
