@@ -1265,6 +1265,50 @@ const TeleasistenciaApp = () => {
     const operatorMetrics = getOperatorMetrics(assignmentsToUse);
     const hourlyDistribution = getHourlyDistribution();
     
+    // 🔧 DEBUG CRÍTICO: Verificar datos de operadoras
+    console.log('🔍 Dashboard - Verificación de datos:');
+    console.log('- assignmentsToUse length:', assignmentsToUse?.length || 0);
+    console.log('- operatorMetrics length:', operatorMetrics?.length || 0);
+    console.log('- operatorMetrics data:', operatorMetrics);
+    console.log('- zustandOperators length:', zustandOperators?.length || 0);
+    console.log('- operatorAssignments keys:', Object.keys(operatorAssignments));
+    
+    // 🚨 CORRECCIÓN: Si no hay métricas, crear datos de emergencia basados en asignaciones
+    let finalOperatorMetrics = operatorMetrics;
+    
+    if (!operatorMetrics || operatorMetrics.length === 0) {
+      console.log('⚠️ No hay métricas de operadoras, creando datos de emergencia...');
+      
+      // Crear métricas básicas desde las asignaciones existentes
+      const emergencyMetrics = [];
+      Object.entries(operatorAssignments).forEach(([operatorId, assignments]) => {
+        const operator = operators.find(op => op.id === operatorId);
+        if (operator && assignments && Array.isArray(assignments)) {
+          // Distribuir llamadas proporcionalmente
+          const totalCalls = Math.floor(metrics.totalCalls * (assignments.length / Math.max(1, assignmentsToUse.length)));
+          const successfulCalls = Math.floor(totalCalls * (metrics.successfulCalls / Math.max(1, metrics.totalCalls)));
+          
+          emergencyMetrics.push({
+            operatorName: operator.name,
+            totalCalls: totalCalls,
+            successfulCalls: successfulCalls,
+            failedCalls: totalCalls - successfulCalls,
+            averageDuration: 60, // Promedio estimado
+            successRate: totalCalls > 0 ? Math.round((successfulCalls / totalCalls) * 100) : 0,
+            isEmergencyData: true // Flag para identificar datos de emergencia
+          });
+        }
+      });
+      
+      console.log('🆘 Métricas de emergencia creadas:', emergencyMetrics);
+      finalOperatorMetrics = emergencyMetrics;
+    }
+    
+    // Asegurar que finalOperatorMetrics nunca sea undefined
+    if (!finalOperatorMetrics || !Array.isArray(finalOperatorMetrics)) {
+      finalOperatorMetrics = [];
+    }
+    
     // Cálculos de rendimiento avanzados
     const successRate = metrics.totalCalls > 0 ? ((metrics.successfulCalls / metrics.totalCalls) * 100).toFixed(1) : 0;
     const failureRate = metrics.totalCalls > 0 ? ((metrics.failedCalls / metrics.totalCalls) * 100).toFixed(1) : 0;
@@ -1272,12 +1316,16 @@ const TeleasistenciaApp = () => {
     const contactabilityRate = metrics.uniqueBeneficiaries > 0 ? ((metrics.successfulCalls / metrics.uniqueBeneficiaries) * 100).toFixed(1) : 0;
 
     // Top performers y análisis de rendimiento
-    const topPerformers = operatorMetrics
+    const topPerformers = finalOperatorMetrics
       .sort((a, b) => b.successfulCalls - a.successfulCalls)
       .slice(0, 3);
 
-    const operatorWithMostCalls = operatorMetrics
+    const operatorWithMostCalls = finalOperatorMetrics
       .sort((a, b) => b.totalCalls - a.totalCalls)[0];
+      
+    // 🔍 DEBUG FINAL: Verificar top performers
+    console.log('🏆 Top Performers calculados:', topPerformers);
+    console.log('📞 Operadora con más llamadas:', operatorWithMostCalls);
 
     return (
     <div className="space-y-8">
@@ -1406,7 +1454,12 @@ const TeleasistenciaApp = () => {
                     </div>
                     <div>
                       <p className="font-medium">{operator.operatorName}</p>
-                      <p className="text-sm text-gray-500">{operator.totalCalls} llamadas</p>
+                      <p className="text-sm text-gray-500">
+                        {operator.totalCalls} llamadas
+                        {operator.isEmergencyData && (
+                          <span className="ml-1 text-xs text-yellow-600">(estimado)</span>
+                        )}
+                      </p>
                     </div>
                   </div>
                   <div className="text-right">
@@ -1417,7 +1470,15 @@ const TeleasistenciaApp = () => {
               ))}
             </div>
           ) : (
-            <p className="text-gray-500 text-center py-4">No hay datos de operadoras disponibles</p>
+            <div className="text-center py-6">
+              <p className="text-gray-500 mb-2">No hay datos de operadoras disponibles</p>
+              <p className="text-sm text-gray-400">
+                {operatorAssignments && Object.keys(operatorAssignments).length > 0 
+                  ? '⚠️ Verifica que haya datos de llamadas cargados'
+                  : '⚠️ Necesitas crear operadoras y asignar beneficiarios en el módulo Asignaciones'
+                }
+              </p>
+            </div>
           )}
         </div>
 
@@ -1493,11 +1554,16 @@ const TeleasistenciaApp = () => {
       </div>
 
       {/* 📊 TABLA DETALLADA DE OPERADORAS */}
-      {operatorMetrics.length > 0 && (
+      {finalOperatorMetrics.length > 0 && (
         <div className="bg-white rounded-xl shadow-lg p-6">
           <h3 className="text-lg font-semibold mb-4 flex items-center">
             <Users className="h-5 w-5 text-indigo-500 mr-2" />
             📊 Detalle Completo por Teleoperadora
+            {finalOperatorMetrics.some(m => m.isEmergencyData) && (
+              <span className="ml-2 text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full">
+                Datos Estimados
+              </span>
+            )}
           </h3>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -1524,7 +1590,7 @@ const TeleasistenciaApp = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {operatorMetrics.map((operator, index) => {
+                {finalOperatorMetrics.map((operator, index) => {
                   const operatorSuccessRate = operator.totalCalls > 0 ? ((operator.successfulCalls / operator.totalCalls) * 100).toFixed(1) : 0;
                   return (
                     <tr key={index} className="hover:bg-gray-50">
