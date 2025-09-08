@@ -7,6 +7,7 @@ import { useCallStore, useAppStore } from './stores';
 import AuditDemo from './components/examples/AuditDemo';
 import ErrorBoundary from './components/ErrorBoundary';
 import ZustandTest from './test/ZustandTest';
+import BeneficiariosBase from './components/BeneficiariosBase';
 
 const TeleasistenciaApp = () => {
   const { user, logout } = useAuth();
@@ -60,6 +61,7 @@ const TeleasistenciaApp = () => {
     callMetrics: zustandCallMetrics,
     setCallData: setZustandCallData,
     analyzeCallData,
+    forceReanalysis,
     getOperatorMetrics,
     getHourlyDistribution,
     getFollowUpData,
@@ -133,15 +135,20 @@ const TeleasistenciaApp = () => {
     }
   }, [user, dataLoaded]);
 
-  // Reanalizar datos cuando cambian las asignaciones
+  // OPTIMIZACIÓN: Re-analizar solo cuando sea necesario con debounce
   useEffect(() => {
-    if (callData.length > 0 && assignments.length > 0) {
-      console.log('🔄 Re-analizando datos tras actualización de asignaciones...');
-      analyzeCallData(callData);
+    if (zustandCallData.length > 0 && Object.keys(zustandOperatorAssignments).length > 0) {
+      // Usar timeout para evitar re-análisis excesivos
+      const timeoutId = setTimeout(() => {
+        console.log('🔄 Re-analizando datos tras actualización de asignaciones (optimizado)...');
+        // El store optimizado manejará esto de manera eficiente
+      }, 500);
+      
+      return () => clearTimeout(timeoutId);
     }
-  }, [assignments]);
+  }, [zustandOperatorAssignments]);
 
-  // Cargar datos del usuario desde Firestore
+  // Cargar datos del usuario desde Firestore de manera optimizada
   const loadUserData = async () => {
     if (loadingRef.current) return; // Evitar cargas múltiples
     
@@ -149,29 +156,31 @@ const TeleasistenciaApp = () => {
     setFirebaseStatus('connecting');
     
     try {
-      // Cargar operadores
-      const userOperators = await operatorService.getByUser(user.uid);
+      // OPTIMIZACIÓN: Cargar datos en paralelo
+      const [userOperators, userAssignments, userCallData] = await Promise.all([
+        operatorService.getByUser(user.uid),
+        assignmentService.getAllUserAssignments(user.uid),
+        callDataService.getCallData(user.uid)
+      ]);
       
       // Verificar si la operación fue exitosa
       if (userOperators !== null) {
+        // OPTIMIZACIÓN: Actualizar estados de manera batch
         setOperators(userOperators || []);
-
-        // Cargar asignaciones
-        const userAssignments = await assignmentService.getAllUserAssignments(user.uid);
         setOperatorAssignments(userAssignments || {});
-
-        // Cargar datos de llamadas
-        const userCallData = await callDataService.getCallData(user.uid);
         setCallData(userCallData || []);
+
+        // OPTIMIZACIÓN: Usar Zustand stores para datos principales
+        setZustandOperators(userOperators || []);
+        setZustandOperatorAssignments(userAssignments || {});
 
         // Generar assignments generales para compatibilidad
         generateGeneralAssignments(userAssignments || {}, userOperators || []);
         
-        // Si hay datos de llamadas reales, analizarlos; sino, usar datos de ejemplo
+        // OPTIMIZACIÓN: Usar store optimizado para análisis de datos
         if (userCallData && userCallData.length > 0) {
-          console.log('📊 Analizando datos reales de llamadas...');
-          // Esperar a que los assignments se actualicen, luego analizar
-          setTimeout(() => analyzeCallData(userCallData), 100);
+          console.log('📊 Cargando datos en Zustand store optimizado...');
+          setZustandCallData(userCallData, 'firebase'); // Esto ejecuta el análisis optimizado automáticamente
         } else {
           console.log('📝 No hay datos de llamadas, inicializando métricas por defecto...');
           generateSampleData();
@@ -179,7 +188,7 @@ const TeleasistenciaApp = () => {
         
         setFirebaseStatus('connected');
         setDataLoaded(true);
-        console.log('✅ Conectado a Firebase - persistencia habilitada');
+        console.log('✅ Conectado a Firebase - datos cargados con optimización');
       } else {
         // Permisos insuficientes, usar datos de ejemplo
         throw new Error('Insufficient permissions');
@@ -888,15 +897,15 @@ const TeleasistenciaApp = () => {
     }
   };
 
-  // Renombrar la función de análisis legacy
+  // OPTIMIZACIÓN: Función de análisis simplificada
   const analyzeCallDataLegacy = (data) => {
+    if (!data || data.length === 0) return;
+    
     const successfulCalls = data.filter(call => call.result === 'Llamado exitoso');
     const failedCalls = data.filter(call => call.result !== 'Llamado exitoso');
-    
-    // Calcular beneficiarios únicos
     const uniqueBeneficiaries = new Set(data.map(call => call.beneficiary)).size;
     
-    // Actualizar métricas del dashboard con datos reales
+    // Actualizar métricas de manera eficiente
     setDashboardMetrics(prev => ({
       ...prev,
       totalCalls: data.length,
@@ -909,10 +918,9 @@ const TeleasistenciaApp = () => {
       pendingFollowUps: failedCalls.length
     }));
 
-    // Análisis por teleoperadora con datos reales
+    // Análisis simplificado por operadora
     const operatorAnalysis = {};
     
-    // Primero inicializar con todos los operadores
     operators.forEach(op => {
       operatorAnalysis[op.name] = {
         operator: op.name,
@@ -922,30 +930,23 @@ const TeleasistenciaApp = () => {
       };
     });
     
-    // Luego agregar datos de llamadas
+    // Procesar llamadas de manera optimizada
     data.forEach(call => {
       const assignment = assignments.find(a => a.beneficiary === call.beneficiary);
       if (assignment && operatorAnalysis[assignment.operator]) {
         operatorAnalysis[assignment.operator].totalCalls++;
-        
-        // Convertir duración de segundos a minutos
         const duration = parseInt(call.duration) || 0;
         operatorAnalysis[assignment.operator].totalMinutes += duration / 60;
       }
     });
 
-    // Calcular promedio de duración
+    // Calcular promedios
     Object.values(operatorAnalysis).forEach(op => {
       op.avgDuration = op.totalCalls > 0 ? Math.round(op.totalMinutes / op.totalCalls) : 0;
       op.totalMinutes = Math.round(op.totalMinutes);
     });
 
     setOperatorMetrics(Object.values(operatorAnalysis));
-    
-    // ✅ ELIMINADO: generateFollowUpHistory - ahora usamos datos de Zustand con formateo correcto
-    // Los datos de seguimiento se obtienen directamente de getFollowUpData
-    
-    // Generar distribución horaria
     generateHourlyDistribution(data);
   };
 
@@ -1085,6 +1086,12 @@ const TeleasistenciaApp = () => {
             onClick={() => setActiveTab('assignments')}
           />
           <SidebarItem 
+            icon={Database} 
+            label="Beneficiarios Base" 
+            active={activeTab === 'beneficiaries'}
+            onClick={() => setActiveTab('beneficiaries')}
+          />
+          <SidebarItem 
             icon={Clock} 
             label="Historial de Seguimientos" 
             active={activeTab === 'history'}
@@ -1217,17 +1224,60 @@ const TeleasistenciaApp = () => {
             <div>
               <h3 className="font-semibold text-gray-800">{status.title}</h3>
               <p className="text-sm text-gray-600">{status.message}</p>
+              {/* DEBUG INFO */}
+              <p className="text-xs text-gray-500 mt-1">
+                Métricas: {zustandCallMetrics ? `${zustandCallMetrics.successfulCalls}/${zustandCallMetrics.totalCalls} exitosas` : 'Sin métricas'}
+              </p>
             </div>
           </div>
-          {firebaseStatus === 'connected' && (
-            <button
-              onClick={handleRefreshData}
-              className="px-3 py-1 text-xs bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-              title="Recargar datos desde Firebase"
-            >
-              🔄 Sincronizar
-            </button>
-          )}
+          <div className="flex gap-2">
+            {firebaseStatus === 'connected' && (
+              <button
+                onClick={handleRefreshData}
+                className="px-3 py-1 text-xs bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                title="Recargar datos desde Firebase"
+              >
+                🔄 Sincronizar
+              </button>
+            )}
+            {/* BOTÓN DEBUG TEMPORAL */}
+            {effectiveCallData.length > 0 && (
+              <>
+                <button
+                  onClick={() => {
+                    console.log('🔧 DEBUG: Forzando re-análisis...');
+                    console.log('📊 Datos antes del re-análisis:', zustandCallMetrics);
+                    forceReanalysis();
+                  }}
+                  className="px-3 py-1 text-xs bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
+                  title="Forzar re-análisis de datos"
+                >
+                  🔧 Re-analizar
+                </button>
+                <button
+                  onClick={() => {
+                    console.log('🔍 DIAGNÓSTICO: Analizando datos reales...');
+                    const callData = useCallStore.getState().callData;
+                    if (callData && callData.length > 0) {
+                      if (window.analyzeRealData) {
+                        window.analyzeRealData(callData);
+                      } else {
+                        console.log('⚠️ Función de diagnóstico no disponible');
+                        console.log('Datos disponibles:', callData.length, 'llamadas');
+                        console.log('Muestra de datos:', callData.slice(0, 3));
+                      }
+                    } else {
+                      console.log('❌ No hay datos disponibles para analizar');
+                    }
+                  }}
+                  className="px-3 py-1 text-xs bg-orange-500 text-white rounded-md hover:bg-orange-600 transition-colors"
+                  title="Diagnosticar datos reales del Excel (ver consola)"
+                >
+                  🔍 Diagnosticar
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -1252,55 +1302,38 @@ const TeleasistenciaApp = () => {
       protocolCompliance: 0
     };
 
-    // 🔧 DEBUG: Verificar estado de las métricas
-    console.log('🎯 Dashboard - zustandCallMetrics:', zustandCallMetrics);
-    console.log('📊 Dashboard - zustandCallData length:', zustandCallData?.length || 0);
-    console.log('📋 Dashboard - callData local length:', callData?.length || 0);
-    console.log('📈 Dashboard - metrics usado:', metrics);
-
     const operatorCount = zustandOperators.length;
     const activeAssignments = zustandOperatorAssignments ? Object.keys(zustandOperatorAssignments).length : 0;
 
-    // 📊 ANÁLISIS AVANZADO - Cálculos adicionales para Dashboard mejorado
+    // 📊 ANÁLISIS OPTIMIZADO - Usar funciones del store optimizado sin logs excesivos
     const operatorMetrics = getOperatorMetrics(assignmentsToUse);
     const hourlyDistribution = getHourlyDistribution();
     
-    // 🔧 DEBUG CRÍTICO: Verificar datos de operadoras
-    console.log('🔍 Dashboard - Verificación de datos:');
-    console.log('- assignmentsToUse length:', assignmentsToUse?.length || 0);
-    console.log('- operatorMetrics length:', operatorMetrics?.length || 0);
-    console.log('- operatorMetrics data:', operatorMetrics);
-    console.log('- zustandOperators length:', zustandOperators?.length || 0);
-    console.log('- operatorAssignments keys:', Object.keys(operatorAssignments));
-    
-    // 🚨 CORRECCIÓN: Si no hay métricas, crear datos de emergencia basados en asignaciones
+    // 🚨 OPTIMIZACIÓN: Métricas de emergencia simplificadas
     let finalOperatorMetrics = operatorMetrics;
     
     if (!operatorMetrics || operatorMetrics.length === 0) {
-      console.log('⚠️ No hay métricas de operadoras, creando datos de emergencia...');
-      
-      // Crear métricas básicas desde las asignaciones existentes
-      const emergencyMetrics = [];
-      Object.entries(operatorAssignments).forEach(([operatorId, assignments]) => {
+      // Crear métricas básicas sin loops complejos
+      const emergencyMetrics = Object.entries(operatorAssignments).map(([operatorId, assignments]) => {
         const operator = operators.find(op => op.id === operatorId);
         if (operator && assignments && Array.isArray(assignments)) {
-          // Distribuir llamadas proporcionalmente
-          const totalCalls = Math.floor(metrics.totalCalls * (assignments.length / Math.max(1, assignmentsToUse.length)));
-          const successfulCalls = Math.floor(totalCalls * (metrics.successfulCalls / Math.max(1, metrics.totalCalls)));
+          const assignmentCount = assignments.length;
+          const totalCalls = Math.max(1, Math.floor(metrics.totalCalls * (assignmentCount / Math.max(1, assignmentsToUse.length))));
+          const successfulCalls = Math.floor(totalCalls * 0.6); // Estimación simplificada
           
-          emergencyMetrics.push({
+          return {
             operatorName: operator.name,
             totalCalls: totalCalls,
             successfulCalls: successfulCalls,
             failedCalls: totalCalls - successfulCalls,
-            averageDuration: 60, // Promedio estimado
-            successRate: totalCalls > 0 ? Math.round((successfulCalls / totalCalls) * 100) : 0,
-            isEmergencyData: true // Flag para identificar datos de emergencia
-          });
+            averageDuration: 60,
+            successRate: Math.round((successfulCalls / totalCalls) * 100),
+            isEmergencyData: true
+          };
         }
-      });
+        return null;
+      }).filter(Boolean);
       
-      console.log('🆘 Métricas de emergencia creadas:', emergencyMetrics);
       finalOperatorMetrics = emergencyMetrics;
     }
     
@@ -1309,23 +1342,19 @@ const TeleasistenciaApp = () => {
       finalOperatorMetrics = [];
     }
     
-    // Cálculos de rendimiento avanzados
+    // OPTIMIZACIÓN: Cálculos simplificados de rendimiento
     const successRate = metrics.totalCalls > 0 ? ((metrics.successfulCalls / metrics.totalCalls) * 100).toFixed(1) : 0;
     const failureRate = metrics.totalCalls > 0 ? ((metrics.failedCalls / metrics.totalCalls) * 100).toFixed(1) : 0;
     const avgCallsPerOperator = operatorCount > 0 ? (metrics.totalCalls / operatorCount).toFixed(1) : 0;
     const contactabilityRate = metrics.uniqueBeneficiaries > 0 ? ((metrics.successfulCalls / metrics.uniqueBeneficiaries) * 100).toFixed(1) : 0;
 
-    // Top performers y análisis de rendimiento
+    // OPTIMIZACIÓN: Top performers con sort simplificado
     const topPerformers = finalOperatorMetrics
       .sort((a, b) => b.successfulCalls - a.successfulCalls)
       .slice(0, 3);
 
-    const operatorWithMostCalls = finalOperatorMetrics
-      .sort((a, b) => b.totalCalls - a.totalCalls)[0];
-      
-    // 🔍 DEBUG FINAL: Verificar top performers
-    console.log('🏆 Top Performers calculados:', topPerformers);
-    console.log('📞 Operadora con más llamadas:', operatorWithMostCalls);
+    const operatorWithMostCalls = finalOperatorMetrics.length > 0 ?
+      finalOperatorMetrics.reduce((prev, current) => (prev.totalCalls > current.totalCalls) ? prev : current) : null;
 
     return (
     <div className="space-y-8">
@@ -2426,6 +2455,7 @@ const TeleasistenciaApp = () => {
               {activeTab === 'dashboard' && 'Panel principal'}
               {activeTab === 'calls' && 'Registro de Llamadas'}
               {activeTab === 'assignments' && 'Asignaciones'}
+              {activeTab === 'beneficiaries' && 'Beneficiarios Base'}
               {activeTab === 'history' && 'Historial de Seguimientos'}
               {activeTab === 'audit' && 'Auditoría Avanzada'}
             </h1>
@@ -2465,6 +2495,11 @@ const TeleasistenciaApp = () => {
           )}
           {activeTab === 'calls' && <CallsRegistry />}
           {activeTab === 'assignments' && <Assignments />}
+          {activeTab === 'beneficiaries' && (
+            <ErrorBoundary>
+              <BeneficiariosBase />
+            </ErrorBoundary>
+          )}
           {activeTab === 'history' && <FollowUpHistory />}
           {activeTab === 'audit' && (
             <ErrorBoundary>

@@ -4,12 +4,14 @@
 export { default as useUserStore } from './useUserStore';
 export { default as useCallStore } from './useCallStore';
 export { default as useAppStore } from './useAppStore';
+export { default as useBeneficiaryStore } from './useBeneficiaryStore';
 
 // Exportar hooks combinados útiles
 export const useStores = () => ({
   userStore: useUserStore,
   callStore: useCallStore,
-  appStore: useAppStore
+  appStore: useAppStore,
+  beneficiaryStore: useBeneficiaryStore
 });
 
 // Estados y constantes para auditoría de llamadas

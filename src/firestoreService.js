@@ -21,7 +21,9 @@ const COLLECTIONS = {
   OPERATORS: 'operators',
   ASSIGNMENTS: 'assignments',
   CALL_DATA: 'callData',
-  USER_DATA: 'userData'
+  USER_DATA: 'userData',
+  BENEFICIARIES: 'beneficiaries',
+  BENEFICIARY_UPLOADS: 'beneficiaryUploads'
 };
 
 // Variable para controlar el logging de errores

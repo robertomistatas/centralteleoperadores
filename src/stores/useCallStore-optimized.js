@@ -40,31 +40,16 @@ const useCallStore = create(
       _beneficiaryCache: new Map(),
       _dateCache: new Map(),
 
-      // Función para forzar re-análisis (útil después de correcciones)
-      forceReanalysis: () => {
-        const { callData } = get();
-        if (callData && callData.length > 0) {
-          console.log('🔄 Forzando re-análisis con lógica corregida...');
-          get().analyzeCallData();
-        }
-      },
-
       // Acciones principales para auditoría
       setCallData: (data, source = 'excel') => {
         const timestamp = new Date().toISOString();
-        
-        // CORRECCIÓN: Limpiar cachés cuando llegan nuevos datos
         set({
           callData: data,
           dataSource: source,
           lastUpdated: timestamp,
           isLoading: false,
           loadingStage: 'complete',
-          loadingMessage: `${data.length} llamadas cargadas exitosamente`,
-          // Limpiar cachés para forzar recálculo
-          _phoneToOperatorCache: new Map(),
-          _beneficiaryCache: new Map(),
-          _dateCache: new Map()
+          loadingMessage: `${data.length} llamadas cargadas exitosamente`
         });
         // Analizar automáticamente los nuevos datos
         get().analyzeCallData();
@@ -126,13 +111,10 @@ const useCallStore = create(
             const date = call.fecha || call.date || new Date().toISOString().split('T')[0];
             const duration = parseInt(call.duracion || call.duration || 0);
             
-            // CORRECCIÓN EXACTA: Solo considerar exitoso si es exactamente "Llamado exitoso"
-            const result = call.resultado || call.result || call.estado || '';
-            
-            // Una llamada es exitosa solo si:
-            // 1. El resultado es exactamente "Llamado exitoso" Y
-            // 2. Tiene duración > 0 (para validar consistencia)
-            const isSuccessful = (result === 'Llamado exitoso' || result === 'exitoso' || result === 'Exitoso') && duration > 0;
+            // Análisis simplificado de resultado
+            const result = (call.resultado || call.result || call.estado || '').toLowerCase();
+            const isSuccessful = result.includes('exitosa') || result.includes('contactado') || 
+                               result.includes('atendida') || result.includes('completada');
             
             return {
               ...call,
@@ -327,9 +309,12 @@ const useCallStore = create(
                   const duration = parseInt(call.duration || call.duracion || 0);
                   metrics.totalDuration += duration;
                   
-                  // CORRECCIÓN EXACTA: Solo considerar exitoso si es exactamente "Llamado exitoso" Y tiene duración > 0
-                  const result = call.result || call.resultado || call.estado || '';
-                  const isSuccessful = (result === 'Llamado exitoso' || result === 'exitoso' || result === 'Exitoso') && duration > 0;
+                  // Análisis simplificado de resultado
+                  const result = (call.result || call.resultado || call.estado || '').toLowerCase();
+                  const isSuccessful = result.includes('exitosa') || result.includes('exitoso') || 
+                                     result.includes('contactado') || result.includes('atendida') ||
+                                     result.includes('respuesta') || result.includes('contesto') ||
+                                     result.includes('completada') || result.includes('respondio');
                   
                   if (isSuccessful) {
                     metrics.successfulCalls++;
@@ -467,8 +452,7 @@ const useCallStore = create(
         if (beneficiaryStatus.size === 0) {
           processedData.forEach(call => {
             const beneficiary = call.beneficiario || call.beneficiary;
-            // CORRECCIÓN: Usar el resultado real del call, no generar uno artificial
-            const result = call.resultado || call.result || call.estado || 'Sin resultado';
+            const result = call.resultado || call.result || (call.categoria === 'exitosa' ? 'Llamado exitoso' : 'Llamado fallido');
             const date = call.fecha || call.date;
             
             if (!beneficiary) return;

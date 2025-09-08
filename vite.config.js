@@ -7,5 +7,10 @@ export default defineConfig({
   base: '/centralteleoperadores/',
   build: {
     outDir: 'dist',
+  },
+  server: {
+    host: '0.0.0.0', // Permite acceso desde cualquier IP en la red
+    port: 5173,      // Puerto específico
+    open: false      // No abrir automáticamente el navegador
   }
 })
