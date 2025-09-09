@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, BarChart3, PieChart, Calendar, AlertCircle, Plus, Edit, Trash2, UserPlus, FileSpreadsheet, Save, X, LogOut, User, Zap, Database } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useAuth } from './AuthContext';
@@ -608,10 +608,38 @@ const TeleasistenciaApp = () => {
     setBeneficiarySearchResults(filteredResults);
   };
 
-  // Manejar cambio en el término de búsqueda
+  // Ref para el timeout del debouncing
+  const searchTimeoutRef = useRef(null);
+
+  // Cleanup del timeout al desmontar el componente
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Manejar cambio en el término de búsqueda con debouncing
   const handleBeneficiarySearch = (term) => {
+    // Actualizar inmediatamente el estado del input para que sea responsive
     setBeneficiarySearchTerm(term);
-    searchBeneficiaries(term);
+    
+    // Limpiar timeout anterior
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    // Si el término está vacío, limpiar resultados inmediatamente
+    if (!term.trim()) {
+      setBeneficiarySearchResults([]);
+      return;
+    }
+    
+    // Debouncing: esperar 300ms antes de ejecutar la búsqueda
+    searchTimeoutRef.current = setTimeout(() => {
+      searchBeneficiaries(term);
+    }, 300);
   };
 
   const handleFileUpload = (event) => {
@@ -1982,7 +2010,10 @@ const TeleasistenciaApp = () => {
                   type="text"
                   placeholder="Buscar por nombre del beneficiario, teleoperadora, teléfono o comuna..."
                   value={beneficiarySearchTerm}
-                  onChange={(e) => handleBeneficiarySearch(e.target.value)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    handleBeneficiarySearch(value);
+                  }}
                   className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>

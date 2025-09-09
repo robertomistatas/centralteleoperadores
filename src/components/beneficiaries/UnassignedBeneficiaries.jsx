@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { UserX, Search, AlertTriangle, Users, Phone, ChevronDown, ChevronUp } from 'lucide-react';
+import { UserX, Search, AlertTriangle, Users, Phone, ChevronDown, ChevronUp, FileSpreadsheet } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { findBeneficiaryMatch } from '../../utils/stringNormalization';
+import * as XLSX from 'xlsx';
 
 /**
  * Componente para mostrar beneficiarios sin teleoperadora asignada
@@ -22,17 +23,44 @@ const UnassignedBeneficiaries = ({
     const calculateUnassigned = () => {
       setIsLoading(true);
       
-      // Crear lista de beneficiarios asignados a partir de assignments
+      console.log('🔍 UnassignedBeneficiaries - Calculando sin asignar:', {
+        beneficiaries: beneficiaries.length,
+        assignments: assignments.length
+      });
+      
+      if (assignments.length === 0) {
+        console.log('⚠️ No hay asignaciones, todos los beneficiarios aparecen como sin asignar');
+        setUnassignedBeneficiaries(beneficiaries);
+        setIsLoading(false);
+        return;
+      }
+      
+      // CORRECCIÓN: Mapear correctamente los campos de assignments según el formato del store
       const assignedBeneficiaries = assignments.map(assignment => ({
-        nombre: assignment.nombre || assignment.beneficiario,
-        telefono: assignment.telefono || assignment.fono,
-        teleoperadora: assignment.teleoperadora || assignment.operador
-      })).filter(item => item.nombre); // Filtrar elementos válidos
+        // El store devuelve: { operator, operatorName, beneficiary, phone, commune }
+        nombre: assignment.beneficiary || assignment.nombre || assignment.beneficiario,
+        telefono: assignment.phone || assignment.primaryPhone || assignment.telefono || assignment.fono,
+        teleoperadora: assignment.operator || assignment.operatorName || assignment.teleoperadora || assignment.operador
+      })).filter(item => item.nombre && item.teleoperadora); // Filtrar elementos válidos con operadora
+      
+      console.log('📋 Asignaciones procesadas:', {
+        total: assignedBeneficiaries.length,
+        muestra: assignedBeneficiaries.slice(0, 3).map(a => ({
+          nombre: a.nombre,
+          teleoperadora: a.teleoperadora
+        }))
+      });
       
       // Encontrar beneficiarios de la base que no están en assignments
       const unassigned = beneficiaries.filter(beneficiary => {
         const match = findBeneficiaryMatch(beneficiary, assignedBeneficiaries);
         return !match; // Si no hay coincidencia, está sin asignar
+      });
+      
+      console.log('📊 Resultado del cálculo:', {
+        totalBeneficiarios: beneficiaries.length,
+        asignados: assignedBeneficiaries.length,
+        sinAsignar: unassigned.length
       });
       
       setUnassignedBeneficiaries(unassigned);
@@ -64,6 +92,91 @@ const UnassignedBeneficiaries = ({
     return [beneficiary.fono, beneficiary.sim, beneficiary.appSim]
       .filter(phone => phone && phone !== '000000000')
       .join(', ') || 'Sin teléfonos válidos';
+  };
+
+  // Función para exportar a Excel
+  const exportToExcel = () => {
+    // Preparar datos para Excel con encabezados
+    const excelData = [
+      // Encabezado principal
+      ['BENEFICIARIOS SIN ASIGNAR'],
+      [], // Fila vacía
+      [`Generado el: ${new Date().toLocaleDateString('es-ES', {
+        year: 'numeric',
+        month: 'long', 
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })}`],
+      [`Total de beneficiarios sin asignar: ${filteredUnassigned.length}`],
+      [], // Fila vacía
+      // Encabezados de la tabla
+      ['#', 'Nombre', 'Dirección', 'Teléfono Principal', 'SIM', 'App SIM', 'Fecha Registro'],
+      // Datos de beneficiarios
+      ...filteredUnassigned.map((beneficiary, index) => [
+        index + 1,
+        beneficiary.nombre || 'Sin nombre',
+        beneficiary.direccion || 'Sin dirección',
+        beneficiary.fono || '',
+        beneficiary.sim || '',
+        beneficiary.appSim || '',
+        beneficiary.creadoEn ? new Date(beneficiary.creadoEn).toLocaleDateString('es-ES') : 'Sin fecha'
+      ])
+    ];
+
+    // Crear libro de trabajo
+    const ws = XLSX.utils.aoa_to_sheet(excelData);
+    const wb = XLSX.utils.book_new();
+    
+    // Configurar anchos de columnas
+    const colWidths = [
+      { wch: 5 },   // #
+      { wch: 30 },  // Nombre
+      { wch: 40 },  // Dirección
+      { wch: 15 },  // Teléfono Principal
+      { wch: 15 },  // SIM
+      { wch: 15 },  // App SIM
+      { wch: 15 }   // Fecha Registro
+    ];
+    ws['!cols'] = colWidths;
+
+    // Aplicar estilos a las celdas principales
+    if (!ws['!merges']) ws['!merges'] = [];
+    
+    // Fusionar celdas para el título principal (A1:G1)
+    ws['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } });
+    
+    // Aplicar estilos básicos mediante formato de celdas
+    const titleCell = 'A1';
+    const headerRow = 6; // Fila de encabezados (0-indexada)
+    
+    // Título principal
+    if (ws[titleCell]) {
+      ws[titleCell].s = {
+        font: { bold: true, sz: 16 },
+        alignment: { horizontal: 'center' }
+      };
+    }
+
+    // Encabezados de tabla
+    const headerCells = ['A7', 'B7', 'C7', 'D7', 'E7', 'F7', 'G7'];
+    headerCells.forEach(cell => {
+      if (ws[cell]) {
+        ws[cell].s = {
+          font: { bold: true, color: { rgb: 'FFFFFF' } },
+          fill: { fgColor: { rgb: '3B82F6' } }
+        };
+      }
+    });
+
+    // Añadir la hoja al libro
+    XLSX.utils.book_append_sheet(wb, ws, 'Beneficiarios Sin Asignar');
+    
+    // Generar nombre del archivo
+    const fileName = `beneficiarios-sin-asignar-${new Date().toISOString().split('T')[0]}.xlsx`;
+    
+    // Guardar el archivo
+    XLSX.writeFile(wb, fileName);
   };
 
   if (isLoading) {
@@ -119,6 +232,21 @@ const UnassignedBeneficiaries = ({
           </div>
           
           <div className="flex items-center space-x-3">
+            {/* Botón de exportar Excel */}
+            {unassignedBeneficiaries.length > 0 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation(); // Evitar que se active el toggle del panel
+                  exportToExcel();
+                }}
+                className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors"
+                title="Exportar listado a Excel"
+              >
+                <FileSpreadsheet className="h-4 w-4 mr-1" />
+                Exportar Excel
+              </button>
+            )}
+            
             {/* Badge con conteo */}
             {unassignedBeneficiaries.length > 0 && (
               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400">

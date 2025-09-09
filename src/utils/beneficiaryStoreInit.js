@@ -9,13 +9,24 @@ import useBeneficiaryStore from '../stores/useBeneficiaryStore';
 let initialized = false;
 
 export const initializeBeneficiaryStore = async (userId) => {
-  if (initialized) return;
+  console.log('🚀 INICIANDO INICIALIZACIÓN DEL STORE:', { userId, initialized });
+  
+  if (initialized) {
+    console.log('⚠️ Store ya inicializado, saltando...');
+    return;
+  }
   
   const store = useBeneficiaryStore.getState();
+  console.log('📊 Estado inicial del store:', {
+    beneficiariesCount: store.beneficiaries?.length || 0,
+    shouldReload: store.shouldReload,
+    stats: store.stats
+  });
   
   try {
     // Verificar si ya tenemos datos persistidos
     const hasPersistedData = store.beneficiaries && store.beneficiaries.length > 0;
+    console.log('💾 ¿Hay datos persistidos?', hasPersistedData);
     
     if (!hasPersistedData) {
       // Si no hay datos persistidos, cargar desde Firebase
@@ -26,14 +37,17 @@ export const initializeBeneficiaryStore = async (userId) => {
       console.log('📋 Usando datos persistidos del store...');
       const stats = store.calculateStats(store.beneficiaries);
       useBeneficiaryStore.setState({ stats });
+      console.log('✅ Estadísticas actualizadas:', stats);
     }
     
     initialized = true;
+    console.log('✅ Store inicializado correctamente');
     
   } catch (error) {
     console.error('❌ Error inicializando store de beneficiarios:', error);
     // En caso de error, intentar cargar desde Firebase de todas formas
     try {
+      console.log('🔄 Intentando recarga forzada...');
       await store.forceReload(userId);
     } catch (retryError) {
       console.error('❌ Error en reintento de carga:', retryError);

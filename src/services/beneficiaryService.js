@@ -27,14 +27,84 @@ const COLLECTIONS = {
  */
 export const beneficiaryService = {
   /**
+   * Elimina todos los beneficiarios de la base de datos
+   * @param {string} userId - ID del usuario (opcional, para eliminar solo sus datos)
+   * @returns {Object} - Resultado de la eliminación
+   */
+  async deleteAllBeneficiaries(userId = null) {
+    try {
+      console.log('🗑️ Eliminando todos los beneficiarios...');
+      
+      let q;
+      if (userId) {
+        console.log(`🗑️ Eliminando beneficiarios del usuario: ${userId}`);
+        q = query(
+          collection(db, COLLECTIONS.BENEFICIARIES),
+          where('creadoPor', '==', userId)
+        );
+      } else {
+        console.log('🗑️ Eliminando TODOS los beneficiarios de la base');
+        q = collection(db, COLLECTIONS.BENEFICIARIES);
+      }
+      
+      const querySnapshot = await getDocs(q);
+      const batch = writeBatch(db);
+      
+      console.log(`🗑️ Documentos a eliminar: ${querySnapshot.size}`);
+      
+      querySnapshot.docs.forEach((doc) => {
+        batch.delete(doc.ref);
+      });
+      
+      await batch.commit();
+      
+      console.log('✅ Eliminación completada');
+      return {
+        success: true,
+        deletedCount: querySnapshot.size,
+        message: `${querySnapshot.size} beneficiarios eliminados exitosamente`
+      };
+      
+    } catch (error) {
+      console.error('❌ Error al eliminar beneficiarios:', error);
+      return {
+        success: false,
+        error: error.message,
+        deletedCount: 0
+      };
+    }
+  },
+
+  /**
    * Procesa y guarda beneficiarios desde Excel
+   * IMPORTANTE: Elimina todos los beneficiarios previos antes de subir nuevos
    * @param {Array} beneficiariesData - Datos de beneficiarios del Excel
    * @param {string} userId - ID del usuario que sube los datos
    * @param {Function} onProgress - Callback para progreso
+   * @param {boolean} replaceAll - Si true, elimina todos los beneficiarios antes del upload
    * @returns {Object} - Resultado del procesamiento
    */
-  async uploadBeneficiaries(beneficiariesData, userId, onProgress = () => {}) {
+  async uploadBeneficiaries(beneficiariesData, userId, onProgress = () => {}, replaceAll = true) {
     try {
+      console.log('📤 Iniciando upload de beneficiarios...');
+      console.log(`📊 Datos a procesar: ${beneficiariesData.length}`);
+      console.log(`🔄 Reemplazar datos existentes: ${replaceAll}`);
+      
+      // PASO 1: Eliminar datos existentes si se solicita
+      if (replaceAll) {
+        console.log('🗑️ PASO 1: Eliminando beneficiarios existentes...');
+        const deleteResult = await this.deleteAllBeneficiaries(userId);
+        
+        if (!deleteResult.success) {
+          throw new Error(`Error al eliminar datos existentes: ${deleteResult.error}`);
+        }
+        
+        console.log(`✅ ${deleteResult.deletedCount} beneficiarios previos eliminados`);
+        onProgress({ phase: 'cleanup', completed: deleteResult.deletedCount, total: deleteResult.deletedCount });
+      }
+      
+      // PASO 2: Procesar y subir nuevos datos
+      console.log('📤 PASO 2: Procesando nuevos beneficiarios...');
       const batch = writeBatch(db);
       const uploadId = `upload_${Date.now()}`;
       const processedBeneficiaries = [];
@@ -105,17 +175,28 @@ export const beneficiaryService = {
       // Ejecutar batch
       await batch.commit();
       
-      return {
+      console.log('✅ UPLOAD COMPLETADO:');
+      console.log(`   - Registros procesados: ${beneficiariesData.length}`);
+      console.log(`   - Exitosos: ${processedBeneficiaries.length}`);
+      console.log(`   - Errores: ${errors.length}`);
+      
+      const result = {
         success: true,
         uploadId,
         totalProcessed: beneficiariesData.length,
         successful: processedBeneficiaries.length,
         errors: errors.length,
         errorDetails: errors,
-        data: processedBeneficiaries
+        data: processedBeneficiaries,
+        replacedPrevious: replaceAll,
+        message: replaceAll 
+          ? `✅ Base de datos reemplazada: ${processedBeneficiaries.length} beneficiarios cargados`
+          : `✅ ${processedBeneficiaries.length} beneficiarios añadidos`
       };
+      
+      return result;
     } catch (error) {
-      console.error('Error en uploadBeneficiaries:', error);
+      console.error('❌ Error en uploadBeneficiaries:', error);
       throw new Error(`Error al cargar beneficiarios: ${error.message}`);
     }
   },
@@ -190,29 +271,39 @@ export const beneficiaryService = {
    */
   async getAllBeneficiaries(userId = null) {
     try {
+      console.log('🔍 getAllBeneficiaries - Iniciando consulta a Firebase...');
+      console.log('🔍 userId:', userId);
+      
       let q;
       
       if (userId) {
+        console.log('🔍 Consultando beneficiarios para usuario específico...');
         q = query(
           collection(db, COLLECTIONS.BENEFICIARIES),
           where('creadoPor', '==', userId),
           orderBy('creadoEn', 'desc')
         );
       } else {
+        console.log('🔍 Consultando todos los beneficiarios...');
         q = query(
           collection(db, COLLECTIONS.BENEFICIARIES),
           orderBy('creadoEn', 'desc')
         );
       }
       
+      console.log('🔍 Ejecutando consulta...');
       const querySnapshot = await getDocs(q);
+      console.log('🔍 Documentos encontrados:', querySnapshot.size);
       
-      return querySnapshot.docs.map(doc => ({
+      const beneficiaries = querySnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
+      
+      console.log('✅ Beneficiarios procesados:', beneficiaries.length);
+      return beneficiaries;
     } catch (error) {
-      console.error('Error al obtener beneficiarios:', error);
+      console.error('❌ Error al obtener beneficiarios:', error);
       return [];
     }
   },
@@ -387,5 +478,64 @@ export const beneficiaryService = {
       console.error('Error al validar beneficiario:', error);
       return null;
     }
+  },
+
+  /**
+   * Función de test para verificar conexión Firebase
+   * @returns {Promise<Object>} - Resultado del test
+   */
+  async testFirebaseConnection() {
+    try {
+      console.log('🧪 Iniciando test de conexión Firebase...');
+      
+      const startTime = performance.now();
+      
+      // Test 1: Verificar colección
+      console.log('📁 Test 1: Verificando colección de beneficiarios...');
+      const beneficiariesRef = collection(db, COLLECTIONS.BENEFICIARIES);
+      console.log('✅ Referencia a colección creada');
+      
+      // Test 2: Hacer una consulta simple
+      console.log('🔍 Test 2: Ejecutando consulta...');
+      const querySnapshot = await getDocs(beneficiariesRef);
+      const beneficiariesCount = querySnapshot.size;
+      console.log(`✅ Consulta ejecutada. Documentos encontrados: ${beneficiariesCount}`);
+      
+      // Test 3: Mostrar algunos datos
+      if (beneficiariesCount > 0) {
+        console.log('📋 Test 3: Mostrando primeros documentos...');
+        let sampleCount = 0;
+        querySnapshot.forEach((doc) => {
+          if (sampleCount < 3) {
+            console.log(`   Documento ${doc.id}:`, doc.data());
+            sampleCount++;
+          }
+        });
+      }
+      
+      const endTime = performance.now();
+      const duration = Math.round(endTime - startTime);
+      
+      const result = {
+        success: true,
+        beneficiariesCount,
+        duration: `${duration}ms`,
+        timestamp: new Date().toISOString()
+      };
+      
+      console.log('🎉 Test Firebase completado:', result);
+      return result;
+      
+    } catch (error) {
+      console.error('❌ Error en test Firebase:', error);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      };
+    }
   }
 };
+
+// Hacer función de test disponible globalmente
+window.testFirebaseConnection = beneficiaryService.testFirebaseConnection;

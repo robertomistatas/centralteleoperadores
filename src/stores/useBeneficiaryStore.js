@@ -13,7 +13,7 @@ const useBeneficiaryStore = create(
       // Estado principal
       beneficiaries: [],
       uploadHistory: [],
-      shouldReload: true, // Flag para controlar recarga desde Firebase
+      shouldReload: false, // Flag para controlar recarga desde Firebase - cambiado a false por defecto
       
       // Estados de UI
       isLoading: false,
@@ -80,6 +80,33 @@ const useBeneficiaryStore = create(
             stats
           };
         });
+      },
+
+      // Limpiar todos los datos
+      clearAllData: () => {
+        console.log('🧹 Limpiando todos los datos del store...');
+        set({
+          beneficiaries: [],
+          uploadHistory: [],
+          searchTerm: '',
+          selectedBeneficiary: null,
+          stats: {
+            total: 0,
+            withPhones: 0,
+            withoutPhones: 0,
+            incomplete: 0,
+            unassigned: 0
+          },
+          shouldReload: false
+        });
+        
+        // También limpiar localStorage
+        try {
+          localStorage.removeItem('beneficiary-store');
+          console.log('🧹 localStorage limpiado');
+        } catch (error) {
+          console.error('Error al limpiar localStorage:', error);
+        }
       },
 
       // Acciones - Búsqueda y filtros
@@ -157,21 +184,29 @@ const useBeneficiaryStore = create(
 
       // Acciones asíncronas
       loadBeneficiaries: async (userId = null) => {
-        const { beneficiaries: currentBeneficiaries } = get();
+        const { beneficiaries: currentBeneficiaries, shouldReload } = get();
         
-        // Si ya tenemos datos y no es la primera carga, no cargar de nuevo
-        if (currentBeneficiaries.length > 0 && !get().shouldReload) {
+        // Si ya tenemos datos persistidos y no necesitamos recargar, usarlos
+        if (currentBeneficiaries.length > 0 && !shouldReload) {
+          console.log('📋 Usando beneficiarios del cache local:', currentBeneficiaries.length);
           return currentBeneficiaries;
         }
         
+        console.log('📥 Cargando beneficiarios desde Firebase...');
         set({ isLoading: true });
         try {
           const beneficiaries = await beneficiaryService.getAllBeneficiaries(userId);
+          console.log('✅ Beneficiarios cargados:', beneficiaries.length);
           get().setBeneficiaries(beneficiaries);
-          set({ shouldReload: false });
+          set({ shouldReload: false }); // Marcar que ya no necesitamos recargar
           return beneficiaries;
         } catch (error) {
-          console.error('Error cargando beneficiarios:', error);
+          console.error('❌ Error cargando beneficiarios:', error);
+          // En caso de error, si tenemos datos en cache, usarlos
+          if (currentBeneficiaries.length > 0) {
+            console.log('🔄 Usando datos en cache debido a error de red');
+            return currentBeneficiaries;
+          }
           throw error;
         } finally {
           set({ isLoading: false });
@@ -381,5 +416,8 @@ const useBeneficiaryStore = create(
     }
   )
 );
+
+// Hacer store disponible globalmente para debugging
+window.zustandStore = useBeneficiaryStore;
 
 export default useBeneficiaryStore;
