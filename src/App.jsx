@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, BarChart3, PieChart, Calendar, AlertCircle, Plus, Edit, Trash2, UserPlus, FileSpreadsheet, Save, X, LogOut, User, Zap, Database } from 'lucide-react';
+import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, BarChart3, PieChart, Calendar, AlertCircle, Plus, Edit, Trash2, UserPlus, FileSpreadsheet, Save, X, LogOut, User, Zap, Database, Activity, Settings } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useAuth } from './AuthContext';
 import { operatorService, assignmentService, callDataService } from './firestoreService';
@@ -8,9 +8,22 @@ import AuditDemo from './components/examples/AuditDemo';
 import ErrorBoundary from './components/ErrorBoundary';
 import ZustandTest from './test/ZustandTest';
 import BeneficiariosBase from './components/BeneficiariosBase';
+import TeleoperadoraDashboard from './components/seguimientos/TeleoperadoraDashboard';
+import SuperAdminDashboard from './components/admin/SuperAdminDashboard';
+import usePermissions from './hooks/usePermissions';
 
 const TeleasistenciaApp = () => {
   const { user, logout } = useAuth();
+  
+  // ✅ SISTEMA DE PERMISOS INTEGRADO
+  const {
+    user: userProfile,
+    isSuperAdmin,
+    visibleModules,
+    defaultTab,
+    canViewConfig,
+    checkModuleAccess
+  } = usePermissions();
   
   // ✅ FUNCIÓN UTILITARIA CENTRALIZADA: Formatear fechas al formato chileno DD-MM-YYYY
   const formatToChileanDate = (dateValue) => {
@@ -84,6 +97,14 @@ const TeleasistenciaApp = () => {
 
   // Estados locales (mantenemos algunos para compatibilidad durante la transición)
   const [activeTab, setActiveTab] = useState('dashboard');
+  
+  // ✅ ACTUALIZAR TAB POR DEFECTO SEGÚN PERMISOS
+  useEffect(() => {
+    if (defaultTab && activeTab === 'dashboard' && !checkModuleAccess('dashboard')) {
+      setActiveTab(defaultTab);
+    }
+  }, [defaultTab, checkModuleAccess]);
+  
   const [callData, setCallData] = useState([]);
   const [assignments, setAssignments] = useState([]);
   // ✅ ELIMINADO: followUpHistory - ahora usamos solo datos de Zustand con formateo correcto de fechas
@@ -111,6 +132,21 @@ const TeleasistenciaApp = () => {
   const [operatorAssignments, setOperatorAssignments] = useState({});
   const [uploadingFor, setUploadingFor] = useState(null);
   
+  // 🔥 SINCRONIZACIÓN AUTOMÁTICA: Sincronizar estado local con Zustand cada vez que cambie
+  useEffect(() => {
+    if (operators.length > 0) {
+      console.log('🔄 Sincronizando operators locales con Zustand:', operators.length);
+      setZustandOperators(operators);
+    }
+  }, [operators, setZustandOperators]);
+  
+  useEffect(() => {
+    if (Object.keys(operatorAssignments).length > 0) {
+      console.log('🔄 Sincronizando operatorAssignments locales con Zustand:', Object.keys(operatorAssignments).length);
+      setZustandOperatorAssignments(operatorAssignments);
+    }
+  }, [operatorAssignments, setZustandOperatorAssignments]);
+  
   // Estados para búsqueda de beneficiarios
   const [showBeneficiarySearch, setShowBeneficiarySearch] = useState(false);
   const [beneficiarySearchTerm, setBeneficiarySearchTerm] = useState('');
@@ -135,6 +171,27 @@ const TeleasistenciaApp = () => {
     }
   }, [user, dataLoaded]);
 
+  // 🔥 SINCRONIZACIÓN INICIAL: Forzar sincronización al cargar la app
+  useEffect(() => {
+    if (dataLoaded && operators.length > 0) {
+      console.log('🔥 FORZANDO SINCRONIZACIÓN INICIAL CON ZUSTAND');
+      console.log('📊 Operators locales:', operators.length);
+      console.log('📊 OperatorAssignments locales:', Object.keys(operatorAssignments).length);
+      
+      setZustandOperators(operators);
+      setZustandOperatorAssignments(operatorAssignments);
+      
+      // Verificar sincronización
+      setTimeout(() => {
+        const { operators: zOperators, operatorAssignments: zAssignments } = useAppStore.getState();
+        console.log('✅ Verificación post-sincronización:', {
+          zustandOperators: zOperators?.length || 0,
+          zustandAssignments: Object.keys(zAssignments || {}).length
+        });
+      }, 500);
+    }
+  }, [dataLoaded, operators, operatorAssignments, setZustandOperators, setZustandOperatorAssignments]);
+
   // OPTIMIZACIÓN: Re-analizar solo cuando sea necesario con debounce
   useEffect(() => {
     if (zustandCallData.length > 0 && Object.keys(zustandOperatorAssignments).length > 0) {
@@ -156,7 +213,25 @@ const TeleasistenciaApp = () => {
     setFirebaseStatus('connecting');
     
     try {
-      // OPTIMIZACIÓN: Cargar datos en paralelo
+      // 🔥 CARGAR DATOS GENERALES DEL SISTEMA PRIMERO
+      console.log('📥 Cargando datos generales del sistema...');
+      const { loadOperators, loadAssignments } = useAppStore.getState();
+      
+      // Cargar todos los operadores y asignaciones del sistema
+      await Promise.all([
+        loadOperators(),
+        loadAssignments()
+      ]);
+      
+      // ✅ Verificar datos cargados
+      const { operators: allOperators, operatorAssignments: allAssignments } = useAppStore.getState();
+      console.log('🎯 DATOS GENERALES CARGADOS:', {
+        operadores: allOperators?.length || 0,
+        asignacionesGrupos: Object.keys(allAssignments || {}).length,
+        totalAsignaciones: Object.values(allAssignments || {}).flat().length
+      });
+      
+      // OPTIMIZACIÓN: Cargar datos específicos del usuario en paralelo
       const [userOperators, userAssignments, userCallData] = await Promise.all([
         operatorService.getByUser(user.uid),
         assignmentService.getAllUserAssignments(user.uid),
@@ -1088,97 +1163,102 @@ const TeleasistenciaApp = () => {
     </div>
   );
 
-  const Sidebar = () => (
-    <div className="w-64 bg-white shadow-lg h-full flex flex-col">
-      <div className="p-6 flex-1">
-        <h2 className="text-xl font-bold text-gray-800 mb-2">Mistatas - Seguimiento de llamadas</h2>
-        <p className="text-xs text-gray-500 mb-6">© 2025</p>
-        
-        <nav className="space-y-2">
-          <SidebarItem 
-            icon={BarChart3} 
-            label="Panel principal" 
-            active={activeTab === 'dashboard'}
-            onClick={() => setActiveTab('dashboard')}
-          />
-          <SidebarItem 
-            icon={Phone} 
-            label="Registro de Llamadas" 
-            active={activeTab === 'calls'}
-            onClick={() => setActiveTab('calls')}
-          />
-          <SidebarItem 
-            icon={Users} 
-            label="Asignaciones" 
-            active={activeTab === 'assignments'}
-            onClick={() => setActiveTab('assignments')}
-          />
-          <SidebarItem 
-            icon={Database} 
-            label="Beneficiarios Base" 
-            active={activeTab === 'beneficiaries'}
-            onClick={() => setActiveTab('beneficiaries')}
-          />
-          <SidebarItem 
-            icon={Clock} 
-            label="Historial de Seguimientos" 
-            active={activeTab === 'history'}
-            onClick={() => setActiveTab('history')}
-          />
-          <SidebarItem 
-            icon={BarChart3} 
-            label="Auditoría Avanzada" 
-            active={activeTab === 'audit'}
-            onClick={() => setActiveTab('audit')}
-          />
-        </nav>
-      </div>
-      
-      {/* User Info and Logout */}
-      <div className="p-6 border-t border-gray-200">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-            <User className="w-5 h-5 text-blue-600" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-gray-900 truncate">
-              {user?.displayName || 'Usuario'}
-            </p>
-            <p className="text-xs text-gray-500 truncate">
-              {user?.email}
-            </p>
-          </div>
-        </div>
-        
-        {/* Indicador de estado de conexión */}
-        <div className="mb-4 p-2 rounded-lg bg-gray-50">
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${
-              firebaseStatus === 'connected' ? 'bg-green-500' : 
-              firebaseStatus === 'connecting' ? 'bg-yellow-500' : 'bg-orange-500'
-            }`}></div>
-            <span className="text-xs text-gray-600">
-              {firebaseStatus === 'connected' ? 'Firebase conectado' : 
-               firebaseStatus === 'connecting' ? 'Conectando...' : 'Modo demo'}
-            </span>
-          </div>
-          {callData.length > 0 && (
-            <p className="text-xs text-gray-500 mt-1">
-              {callData.length} llamadas cargadas
-            </p>
+  const Sidebar = () => {
+    // Mapeo de iconos para los módulos
+    const iconMap = {
+      dashboard: BarChart3,
+      calls: Phone,
+      assignments: Users,
+      beneficiaries: Database,
+      seguimientos: Activity,
+      history: Clock,
+      audit: BarChart3,
+      reports: PieChart,
+      config: Settings
+    };
+
+    return (
+      <div className="w-64 bg-white shadow-lg h-full flex flex-col">
+        <div className="p-6 flex-1">
+          <h2 className="text-xl font-bold text-gray-800 mb-2">Mistatas - Seguimiento de llamadas</h2>
+          <p className="text-xs text-gray-500 mb-6">© 2025</p>
+          
+          <nav className="space-y-2">
+            {visibleModules.map((module) => {
+              const IconComponent = iconMap[module.id] || BarChart3;
+              return (
+                <SidebarItem 
+                  key={module.id}
+                  icon={IconComponent} 
+                  label={module.label} 
+                  active={activeTab === module.id}
+                  onClick={() => setActiveTab(module.id)}
+                />
+              );
+            })}
+          </nav>
+          
+          {/* Indicador de rol para debugging */}
+          {userProfile && (
+            <div className="mt-6 p-3 bg-gray-50 rounded-lg">
+              <p className="text-xs text-gray-600">
+                Rol: <span className="font-medium">{userProfile.role}</span>
+              </p>
+              {isSuperAdmin && (
+                <p className="text-xs text-blue-600 font-medium">
+                  ⚡ Super Administrador
+                </p>
+              )}
+            </div>
           )}
         </div>
         
-        <button
-          onClick={logout}
-          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-        >
-          <LogOut className="w-4 h-4" />
-          Cerrar Sesión
-        </button>
+        {/* User Info and Logout */}
+        <div className="p-6 border-t border-gray-200">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+              <User className="w-5 h-5 text-blue-600" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-900 truncate">
+                {user?.displayName || userProfile?.name || 'Usuario'}
+              </p>
+              <p className="text-xs text-gray-500 truncate">
+                {user?.email}
+              </p>
+            </div>
+          </div>
+          
+          {/* Indicador de estado de conexión */}
+          <div className="mb-4 p-2 rounded-lg bg-gray-50">
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${
+                firebaseStatus === 'connected' ? 'bg-green-500' : 
+                firebaseStatus === 'connecting' ? 'bg-yellow-500' : 'bg-orange-500'
+              }`}></div>
+              <span className="text-xs text-gray-600">
+                {firebaseStatus === 'connected' ? 'Firebase conectado' : 
+                 firebaseStatus === 'connecting' ? 'Conectando...' : 'Modo demo'}
+              </span>
+            </div>
+            {callData.length > 0 && (
+              <p className="text-xs text-gray-500 mt-1">
+                {callData.length} llamadas cargadas
+              </p>
+            )}
+          </div>
+          
+          <button
+            onClick={logout}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            Cerrar Sesión
+          </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const SidebarItem = ({ icon: Icon, label, active, onClick }) => (
     <button
@@ -2487,8 +2567,10 @@ const TeleasistenciaApp = () => {
               {activeTab === 'calls' && 'Registro de Llamadas'}
               {activeTab === 'assignments' && 'Asignaciones'}
               {activeTab === 'beneficiaries' && 'Beneficiarios Base'}
+              {activeTab === 'seguimientos' && 'Seguimientos Periódicos'}
               {activeTab === 'history' && 'Historial de Seguimientos'}
               {activeTab === 'audit' && 'Auditoría Avanzada'}
+              {activeTab === 'config' && 'Configuración del Sistema'}
             </h1>
           </div>
 
@@ -2531,10 +2613,20 @@ const TeleasistenciaApp = () => {
               <BeneficiariosBase />
             </ErrorBoundary>
           )}
+          {activeTab === 'seguimientos' && (
+            <ErrorBoundary>
+              <TeleoperadoraDashboard />
+            </ErrorBoundary>
+          )}
           {activeTab === 'history' && <FollowUpHistory />}
           {activeTab === 'audit' && (
             <ErrorBoundary>
               <AuditDemo />
+            </ErrorBoundary>
+          )}
+          {activeTab === 'config' && canViewConfig && (
+            <ErrorBoundary>
+              <SuperAdminDashboard />
             </ErrorBoundary>
           )}
         </div>

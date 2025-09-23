@@ -117,6 +117,7 @@ const useAppStore = create(
                 id: assignment.id,
                 operator: operator.name,           // ⭐ Campo correcto para operadora
                 operatorName: operator.name,      // ⭐ Campo alternativo
+                operatorEmail: operator.email,    // ⭐ Campo de email
                 beneficiary: assignment.beneficiary,
                 phone: assignment.primaryPhone,
                 commune: assignment.commune
@@ -129,6 +130,58 @@ const useAppStore = create(
         
         console.log('📊 Total asignaciones devueltas:', allAssignments.length);
         return allAssignments;
+      },
+
+      // 🔍 Nueva función: Buscar asignaciones específicamente por email de teleoperadora
+      getAssignmentsByEmail: (userEmail) => {
+        const { operatorAssignments, operators } = get();
+        const normalizedEmail = userEmail?.toLowerCase().trim();
+        
+        console.log('🔍 Buscando asignaciones para email:', normalizedEmail);
+        console.log('🔍 Operadores disponibles:', operators.map(op => ({
+          id: op.id,
+          name: op.name,
+          email: op.email
+        })));
+        
+        // Buscar operador por email
+        const matchingOperator = operators.find(op => {
+          const opEmail = op.email?.toLowerCase().trim();
+          const opName = op.name?.toLowerCase().trim();
+          
+          // Estrategias de matching
+          const exactEmailMatch = opEmail === normalizedEmail;
+          const nameInEmail = normalizedEmail.includes(opName?.split(' ')[0]) || normalizedEmail.includes(opName?.split(' ')[1]);
+          const emailInName = opName?.includes(normalizedEmail.split('@')[0]);
+          
+          console.log(`🔍 Verificando operador ${op.name}:`, {
+            opEmail,
+            exactEmailMatch,
+            nameInEmail,
+            emailInName
+          });
+          
+          return exactEmailMatch || nameInEmail || emailInName;
+        });
+        
+        if (matchingOperator) {
+          console.log('✅ Operador encontrado:', matchingOperator);
+          const assignments = operatorAssignments[matchingOperator.id] || [];
+          console.log('✅ Asignaciones encontradas:', assignments.length);
+          
+          return assignments.map(assignment => ({
+            id: assignment.id,
+            operator: matchingOperator.name,
+            operatorName: matchingOperator.name,
+            operatorEmail: matchingOperator.email,
+            beneficiary: assignment.beneficiary,
+            phone: assignment.primaryPhone,
+            commune: assignment.commune
+          }));
+        } else {
+          console.warn('❌ No se encontró operador para email:', normalizedEmail);
+          return [];
+        }
       },
 
       getTotalAssignments: () => {

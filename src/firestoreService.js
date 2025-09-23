@@ -126,6 +126,36 @@ export const operatorService = {
     } catch (error) {
       return handleFirestoreError(error, 'eliminar operador');
     }
+  },
+
+  // 🆕 Obtener TODOS los operadores (para admin)
+  async getAll() {
+    if (permissionErrorLogged) {
+      return []; // Retornar inmediatamente si ya sabemos que hay problemas de permisos
+    }
+    
+    try {
+      console.log('📥 Obteniendo todos los operadores desde Firebase...');
+      const querySnapshot = await getDocs(collection(db, COLLECTIONS.OPERATORS));
+      
+      const operators = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      console.log('✅ Operadores obtenidos:', operators.length);
+      
+      // Ordenar por fecha de creación (más recientes primero)
+      return operators.sort((a, b) => {
+        const dateA = a.createdAt?.toDate?.() || new Date(0);
+        const dateB = b.createdAt?.toDate?.() || new Date(0);
+        return dateB - dateA;
+      });
+    } catch (error) {
+      console.error('❌ Error obteniendo todos los operadores:', error);
+      const result = handleFirestoreError(error, 'obtener todos los operadores');
+      return result || []; // Retornar array vacío si hay error de permisos
+    }
   }
 };
 
@@ -196,6 +226,39 @@ export const assignmentService = {
       return true;
     } catch (error) {
       return handleFirestoreError(error, 'eliminar asignaciones');
+    }
+  },
+
+  // 🆕 Obtener TODAS las asignaciones (para admin)
+  async getAll() {
+    if (permissionErrorLogged) {
+      return []; // Retornar inmediatamente si ya sabemos que hay problemas de permisos
+    }
+    
+    try {
+      console.log('📥 Obteniendo todas las asignaciones desde Firebase...');
+      const querySnapshot = await getDocs(collection(db, COLLECTIONS.ASSIGNMENTS));
+      
+      const allAssignments = [];
+      querySnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        if (data.assignments && Array.isArray(data.assignments)) {
+          data.assignments.forEach(assignment => {
+            allAssignments.push({
+              ...assignment,
+              operatorId: data.operatorId,
+              userId: data.userId
+            });
+          });
+        }
+      });
+      
+      console.log('✅ Asignaciones obtenidas:', allAssignments.length);
+      return allAssignments;
+    } catch (error) {
+      console.error('❌ Error obteniendo todas las asignaciones:', error);
+      const result = handleFirestoreError(error, 'obtener todas las asignaciones');
+      return result || []; // Retornar array vacío si hay error de permisos
     }
   }
 };
