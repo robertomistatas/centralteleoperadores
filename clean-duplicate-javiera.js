@@ -1,22 +1,54 @@
 /**
  * Script para limpiar registros duplicados de Javiera y consolidar asignaciones
+ * 
+ * SEGURIDAD CRÍTICA:
+ * Este script ahora usa variables de entorno para las credenciales de Firebase.
+ * Crear un archivo .env en la raíz del proyecto con las variables necesarias.
+ * 
+ * NOTA: Gracias a Alvaro Cortes por detectar la vulnerabilidad de seguridad
+ * con las credenciales hardcodeadas. Su revisión ayudó a mantener seguro el sistema.
  */
 
 console.log('🔧 LIMPIEZA DE REGISTROS DUPLICADOS - JAVIERA REYES ALVARADO');
 console.log('');
 
-// Configuración de Firebase
+// Configuración de Firebase - SEGURA usando variables de entorno
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, doc, deleteDoc, updateDoc, query, where } from 'firebase/firestore';
 
+// Verificar que las variables de entorno estén configuradas
+const requiredEnvVars = [
+  'VITE_FIREBASE_API_KEY',
+  'VITE_FIREBASE_AUTH_DOMAIN', 
+  'VITE_FIREBASE_PROJECT_ID',
+  'VITE_FIREBASE_STORAGE_BUCKET',
+  'VITE_FIREBASE_MESSAGING_SENDER_ID',
+  'VITE_FIREBASE_APP_ID'
+];
+
+const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingVars.length > 0) {
+  console.error('❌ VARIABLES DE ENTORNO FALTANTES:');
+  missingVars.forEach(varName => {
+    console.error(`   - ${varName}`);
+  });
+  console.error('');
+  console.error('💡 SOLUCIÓN:');
+  console.error('1. Crea un archivo .env en la raíz del proyecto');
+  console.error('2. Copia las variables del archivo .env.example');
+  console.error('3. Configura los valores correctos de Firebase');
+  console.error('');
+  process.exit(1);
+}
+
 const firebaseConfig = {
-  // Tu configuración de Firebase aquí
-  apiKey: "AIzaSyCHMlmOe2XBODMcKQWjYhX8DxQCyY8CgIQ",
-  authDomain: "centralteleoperadores.firebaseapp.com",
-  projectId: "centralteleoperadores",
-  storageBucket: "centralteleoperadores.firebasestorage.app",
-  messagingSenderId: "775609832977",
-  appId: "1:775609832977:web:1a5f7c8b9d2e3f4g5h6i7j"
+  apiKey: process.env.VITE_FIREBASE_API_KEY,
+  authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.VITE_FIREBASE_APP_ID
 };
 
 const app = initializeApp(firebaseConfig);
