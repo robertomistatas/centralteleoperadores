@@ -312,8 +312,10 @@ const useCallStore = create(
           callData.forEach(call => {
             const callPhone = call.phone || call.telefono || call.numero || call.numero_cliente || call.numero_telefono || '';
             
-            if (callPhone && callPhone.trim()) {
-              const cleanCallPhone = callPhone.toString().replace(/[^\d]/g, '');
+            // Asegurar que callPhone sea string antes de usar trim
+            const phoneStr = String(callPhone || '');
+            if (phoneStr && phoneStr.trim()) {
+              const cleanCallPhone = phoneStr.replace(/[^\d]/g, '');
               
               if (cleanCallPhone.length >= 8) {
                 const phoneKey = cleanCallPhone.slice(-8);

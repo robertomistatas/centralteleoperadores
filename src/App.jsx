@@ -8,6 +8,7 @@ import AuditDemo from './components/examples/AuditDemo';
 import ErrorBoundary from './components/ErrorBoundary';
 import ZustandTest from './test/ZustandTest';
 import BeneficiariosBase from './components/BeneficiariosBase';
+import MetricsTestPanel from './components/MetricsTestPanel';
 import TeleoperadoraDashboard from './components/seguimientos/TeleoperadoraDashboard';
 import SuperAdminDashboard from './components/admin/SuperAdminDashboard';
 import usePermissions from './hooks/usePermissions';
@@ -135,14 +136,14 @@ const TeleasistenciaApp = () => {
   // 🔥 SINCRONIZACIÓN AUTOMÁTICA: Sincronizar estado local con Zustand cada vez que cambie
   useEffect(() => {
     if (operators.length > 0) {
-      console.log('🔄 Sincronizando operators locales con Zustand:', operators.length);
+      // console.log('🔄 Sincronizando operators locales con Zustand:', operators.length);
       setZustandOperators(operators);
     }
   }, [operators, setZustandOperators]);
   
   useEffect(() => {
     if (Object.keys(operatorAssignments).length > 0) {
-      console.log('🔄 Sincronizando operatorAssignments locales con Zustand:', Object.keys(operatorAssignments).length);
+      // console.log('🔄 Sincronizando operatorAssignments locales con Zustand:', Object.keys(operatorAssignments).length);
       setZustandOperatorAssignments(operatorAssignments);
     }
   }, [operatorAssignments, setZustandOperatorAssignments]);
@@ -174,20 +175,21 @@ const TeleasistenciaApp = () => {
   // 🔥 SINCRONIZACIÓN INICIAL: Forzar sincronización al cargar la app
   useEffect(() => {
     if (dataLoaded && operators.length > 0) {
-      console.log('🔥 FORZANDO SINCRONIZACIÓN INICIAL CON ZUSTAND');
-      console.log('📊 Operators locales:', operators.length);
-      console.log('📊 OperatorAssignments locales:', Object.keys(operatorAssignments).length);
+      // Logs comentados para evitar spam en consola
+      // console.log('🔥 FORZANDO SINCRONIZACIÓN INICIAL CON ZUSTAND');
+      // console.log('📊 Operators locales:', operators.length);
+      // console.log('📊 OperatorAssignments locales:', Object.keys(operatorAssignments).length);
       
       setZustandOperators(operators);
       setZustandOperatorAssignments(operatorAssignments);
       
-      // Verificar sincronización
+      // Verificar sincronización sin spam
       setTimeout(() => {
         const { operators: zOperators, operatorAssignments: zAssignments } = useAppStore.getState();
-        console.log('✅ Verificación post-sincronización:', {
-          zustandOperators: zOperators?.length || 0,
-          zustandAssignments: Object.keys(zAssignments || {}).length
-        });
+        // console.log('✅ Verificación post-sincronización:', {
+        //   zustandOperators: zOperators?.length || 0,
+        //   zustandAssignments: Object.keys(zAssignments || {}).length
+        // });
       }, 500);
     }
   }, [dataLoaded, operators, operatorAssignments, setZustandOperators, setZustandOperatorAssignments]);
@@ -197,7 +199,7 @@ const TeleasistenciaApp = () => {
     if (zustandCallData.length > 0 && Object.keys(zustandOperatorAssignments).length > 0) {
       // Usar timeout para evitar re-análisis excesivos
       const timeoutId = setTimeout(() => {
-        console.log('🔄 Re-analizando datos tras actualización de asignaciones (optimizado)...');
+        // console.log('🔄 Re-analizando datos tras actualización de asignaciones (optimizado)...');
         // El store optimizado manejará esto de manera eficiente
       }, 500);
       
@@ -1080,13 +1082,14 @@ const TeleasistenciaApp = () => {
   const createAssignmentsFromLocal = () => {
     const localAssignments = [];
     
-    console.log('🔍 App.jsx - operatorAssignments (fuente de verdad):', operatorAssignments);
-    console.log('🔍 App.jsx - operators disponibles:', operators);
+    // Logs de render comentados para evitar ciclos infinitos
+    // console.log('🔍 App.jsx - operatorAssignments (fuente de verdad):', operatorAssignments);
+    // console.log('🔍 App.jsx - operators disponibles:', operators);
     
     Object.entries(operatorAssignments).forEach(([operatorId, assignments]) => {
       const operator = operators.find(op => op.id === operatorId);
       if (operator && assignments && Array.isArray(assignments)) {
-        console.log(`� Procesando asignaciones para ${operator.name}:`, assignments.length);
+        // console.log(`� Procesando asignaciones para ${operator.name}:`, assignments.length);
         assignments.forEach(assignment => {
           const assignmentData = {
             id: assignment.id,
@@ -1097,43 +1100,44 @@ const TeleasistenciaApp = () => {
             commune: assignment.commune
           };
           localAssignments.push(assignmentData);
-          console.log('✅ Asignación local agregada:', assignmentData);
         });
       } else {
-        console.log(`⚠️ Problemas con operador ${operatorId}:`, {
-          operator: operator,
-          assignments: assignments,
-          isArray: Array.isArray(assignments)
-        });
+        // Solo log de errores críticos
+        if (operators.length > 0) {
+          console.warn(`⚠️ Problemas con operador ${operatorId}:`, {
+            operatorFound: !!operator,
+            assignmentsType: typeof assignments,
+            isArray: Array.isArray(assignments)
+          });
+        }
       }
     });
     
-    console.log('📊 Total asignaciones locales:', localAssignments.length);
-    
-    // 🔧 DIAGNÓSTICO FINAL: Verificar si Hermes está en el resultado
-    console.log('🔍 DIAGNÓSTICO - Buscando Hermes Eduardo Valbuena Romero en resultado final...');
-    const hermesInFinal = localAssignments.find(ass => 
-      ass.beneficiary?.includes('Hermes') || 
-      ass.beneficiary?.includes('HERMES')
-    );
-    if (hermesInFinal) {
-      console.log('🎯 Hermes encontrado en resultado final:', hermesInFinal);
-    } else {
-      console.log('❌ Hermes NO encontrado en resultado final');
-      console.log('📋 Primeros 5 beneficiarios disponibles:', localAssignments.slice(0, 5).map(a => a.beneficiary));
-    }
+    // Logs de diagnóstico comentados para evitar spam
+    // console.log('📊 Total asignaciones locales:', localAssignments.length);
+    // console.log('🔍 DIAGNÓSTICO - Buscando Hermes Eduardo Valbuena Romero en resultado final...');
+    // const hermesInFinal = localAssignments.find(ass => 
+    //   ass.beneficiary?.includes('Hermes') || 
+    //   ass.beneficiary?.includes('HERMES')
+    // );
+    // if (hermesInFinal) {
+    //   console.log('🎯 Hermes encontrado en resultado final:', hermesInFinal);
+    // } else {
+    //   console.log('❌ Hermes NO encontrado en resultado final');
+    //   console.log('📋 Primeros 5 beneficiarios disponibles:', localAssignments.slice(0, 5).map(a => a.beneficiary));
+    // }
     
     return localAssignments;
   };
   
   const assignmentsToUse = createAssignmentsFromLocal();
   
-  // 🔧 DEBUG: Verificar datos finales
-  console.log('🎯 App.jsx - assignmentsToUse final:', assignmentsToUse);
+  // Debug logs comentados para evitar ciclos infinitos
+  // console.log('🎯 App.jsx - assignmentsToUse final:', assignmentsToUse);
   
   const followUpData = getFollowUpData(assignmentsToUse);
   
-  console.log('📊 App.jsx - followUpData resultado:', followUpData);
+  // console.log('📊 App.jsx - followUpData resultado:', followUpData);
   
   // Filtros para historial de seguimientos
   const filteredFollowUps = followUpData.filter(item => {
@@ -2570,6 +2574,7 @@ const TeleasistenciaApp = () => {
               {activeTab === 'seguimientos' && 'Seguimientos Periódicos'}
               {activeTab === 'history' && 'Historial de Seguimientos'}
               {activeTab === 'audit' && 'Auditoría Avanzada'}
+              {activeTab === 'metrics' && 'Métricas Avanzadas'}
               {activeTab === 'config' && 'Configuración del Sistema'}
             </h1>
           </div>
@@ -2622,6 +2627,11 @@ const TeleasistenciaApp = () => {
           {activeTab === 'audit' && (
             <ErrorBoundary>
               <AuditDemo />
+            </ErrorBoundary>
+          )}
+          {activeTab === 'metrics' && (
+            <ErrorBoundary>
+              <MetricsTestPanel />
             </ErrorBoundary>
           )}
           {activeTab === 'config' && canViewConfig && (

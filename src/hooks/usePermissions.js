@@ -66,6 +66,7 @@ export const usePermissions = () => {
   const canViewHistory = checkModuleAccess('history');
   const canViewAudit = checkModuleAccess('audit');
   const canViewReports = checkModuleAccess('reports');
+  const canViewMetrics = isSuper; // Solo super admin puede ver métricas por ahora
 
   // Solo super admin puede acceder a configuración
   const canViewConfig = isSuper;
@@ -130,6 +131,14 @@ export const usePermissions = () => {
       });
     }
 
+    if (canViewMetrics) {
+      modules.push({
+        id: 'metrics',
+        label: 'Métricas Avanzadas',
+        icon: 'PieChart'
+      });
+    }
+
     if (canViewConfig) {
       modules.push({
         id: 'config',
@@ -147,6 +156,7 @@ export const usePermissions = () => {
     canViewSeguimientos,
     canViewHistory,
     canViewAudit,
+    canViewMetrics,
     canViewConfig
   ]);
 
@@ -186,6 +196,7 @@ export const usePermissions = () => {
     canViewHistory,
     canViewAudit,
     canViewReports,
+    canViewMetrics,
     canViewConfig,
     
     // Navegación

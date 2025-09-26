@@ -1,0 +1,22 @@
+rules_version = '2';
+
+// Reglas de Firebase Storage para Central Teleoperadores
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Permitir subida de archivos Excel para usuarios autenticados
+    match /uploads/{allPaths=**} {
+      allow read, write: if request.auth != null 
+        && (resource == null || resource.contentType.matches('.*sheet.*') || resource.name.matches('.*\\.xlsx?$'));
+    }
+    
+    // Archivos procesados - solo lectura para usuarios autenticados
+    match /processed/{allPaths=**} {
+      allow read: if request.auth != null;
+    }
+    
+    // Archivos temporales - acceso completo para usuarios autenticados
+    match /temp/{allPaths=**} {
+      allow read, write, delete: if request.auth != null;
+    }
+  }
+}
