@@ -104,5 +104,64 @@ service cloud.firestore {
       allow read: if request.auth != null; // Todos pueden leer roles para validación
       allow write: if isSuperAdmin();
     }
+    
+    // 📊 REGLAS PARA SISTEMA DE MÉTRICAS AVANZADAS
+    
+    // Métricas globales - Lectura para todos, escritura para admins
+    match /metrics/{document} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    // Colecciones específicas de métricas - Acceso completo para sistema de métricas
+    match /metricas_globales/{document} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    match /metricas_teleoperadoras/{document} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    match /metricas_beneficiarios/{document} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    match /metricas_no_asignados/{document} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    // Métricas por operador - Lectura para todos, escritura para admins
+    match /operatorMetrics/{document} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    // Métricas por beneficiario - Lectura para todos, escritura para admins  
+    match /beneficiaryMetrics/{document} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    // Datos raw de llamadas para métricas - Lectura para todos, escritura para admins
+    match /datos_llamadas/{document} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    // Configuración del sistema de métricas - Solo admins
+    match /systemConfig/{document} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    // Logs de procesamiento - Lectura para todos, escritura para sistema
+    match /processLogs/{document} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null; // Cualquier usuario autenticado puede escribir logs
+    }
   }
 }
