@@ -14,7 +14,7 @@ const firebaseConfig = {
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "centralteleoperadores.firebasestorage.app",
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "260173879227",
   appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:260173879227:web:80577712429c58d201969e",
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-TLLE9PJBPH"
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-TLLE9RJBPM"
 };
 
 // Initialize Firebase
