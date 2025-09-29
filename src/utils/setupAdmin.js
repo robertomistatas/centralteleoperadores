@@ -3,7 +3,7 @@
  * Ejecutar una sola vez para asegurar permisos correctos
  */
 
-import { db } from './firebase.js';
+import { db } from '../firebase.js';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 export const setupSuperAdminProfile = async () => {
@@ -29,7 +29,7 @@ export const setupSuperAdminProfile = async () => {
     };
     
     // Obtener UID del usuario actual (debe estar autenticado)
-    const { auth } = await import('./firebase.js');
+    const { auth } = await import('../firebase.js');
     const currentUser = auth.currentUser;
     
     if (!currentUser) {
@@ -67,7 +67,7 @@ export const setupSuperAdminProfile = async () => {
 // Función para verificar permisos actuales
 export const checkCurrentPermissions = async () => {
   try {
-    const { auth } = await import('./firebase.js');
+    const { auth } = await import('../firebase.js');
     const currentUser = auth.currentUser;
     
     if (!currentUser) {
