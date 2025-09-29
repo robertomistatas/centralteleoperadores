@@ -8,6 +8,7 @@ import { BarChart3, Settings, TestTube, CheckCircle, AlertCircle, Info, Database
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { initializeMetricsStructure, processExcelDataManually } from '../utils/metricsInitializer';
+import { setupSuperAdminProfile, checkCurrentPermissions } from '../utils/setupAdmin';
 import { useCallStore } from '../stores';
 
 function MetricsTestPanel() {
@@ -60,6 +61,40 @@ function MetricsTestPanel() {
     try {
       const result = await processExcelDataManually(callData);
       setInitResult(result);
+    } catch (error) {
+      setInitResult({ success: false, error: error.message });
+    } finally {
+      setIsInitializing(false);
+    }
+  };
+
+  const handleSetupAdminProfile = async () => {
+    setIsInitializing(true);
+    setInitResult(null);
+    
+    try {
+      const result = await setupSuperAdminProfile();
+      setInitResult(result);
+    } catch (error) {
+      setInitResult({ success: false, error: error.message });
+    } finally {
+      setIsInitializing(false);
+    }
+  };
+
+  const handleCheckPermissions = async () => {
+    setIsInitializing(true);
+    setInitResult(null);
+    
+    try {
+      const result = await checkCurrentPermissions();
+      setInitResult({
+        success: result.authenticated,
+        message: result.authenticated 
+          ? `Usuario autenticado: ${result.email}${result.hasProfile ? ' (Perfil configurado)' : ' (Sin perfil)'}`
+          : 'Usuario no autenticado',
+        details: result
+      });
     } catch (error) {
       setInitResult({ success: false, error: error.message });
     } finally {
@@ -273,6 +308,33 @@ function MetricsTestPanel() {
                     * Primero carga un Excel desde "Registro de Llamadas"
                   </p>
                 )}
+              </div>
+            </div>
+
+            {/* Panel de permisos y administración */}
+            <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
+              <div className="flex items-center gap-2 mb-2">
+                <Settings className="h-5 w-5 text-purple-600" />
+                <h4 className="font-medium text-purple-800">Configuración de Permisos</h4>
+              </div>
+              <p className="text-sm text-purple-700 mb-3">
+                Configura perfil de administrador para resolver errores de permisos
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <button
+                  onClick={handleSetupAdminProfile}
+                  disabled={isInitializing}
+                  className="bg-purple-600 text-white px-4 py-2 rounded-md hover:bg-purple-700 disabled:bg-purple-300 transition-colors text-sm"
+                >
+                  {isInitializing ? 'Configurando...' : 'Configurar Admin'}
+                </button>
+                <button
+                  onClick={handleCheckPermissions}
+                  disabled={isInitializing}
+                  className="bg-purple-500 text-white px-4 py-2 rounded-md hover:bg-purple-600 disabled:bg-purple-300 transition-colors text-sm"
+                >
+                  Verificar Permisos
+                </button>
               </div>
             </div>
 
