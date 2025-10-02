@@ -1,0 +1,250 @@
+/* Estilos personalizados para react-big-calendar */
+
+/* Sobrescribir estilos de react-big-calendar con tema personalizado */
+.rbc-calendar {
+  font-family: inherit;
+}
+
+/* Header del calendario */
+.rbc-header {
+  padding: 12px;
+  font-weight: 600;
+  color: #374151;
+  background-color: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+/* Vista del mes */
+.rbc-month-view {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Celdas de fechas */
+.rbc-date-cell {
+  padding: 8px;
+}
+
+.rbc-date-cell > a {
+  color: #374151;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.rbc-date-cell > a:hover {
+  color: #2563eb;
+}
+
+/* Fechas fuera del rango del mes actual */
+.rbc-off-range {
+  color: #9ca3af;
+}
+
+.rbc-off-range-bg {
+  background-color: #f9fafb;
+}
+
+/* Día actual */
+.rbc-today {
+  background-color: #eff6ff;
+}
+
+/* Eventos */
+.rbc-event {
+  border-radius: 6px;
+  padding: 2px 8px;
+  margin: 1px 0;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border: none !important;
+  outline: none !important;
+}
+
+.rbc-event:hover {
+  opacity: 0.8;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+.rbc-event:focus {
+  outline: none;
+}
+
+/* Selección de slot */
+.rbc-slot-selection {
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+/* Toolbar del calendario */
+.rbc-toolbar {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rbc-btn-group {
+  display: inline-flex;
+  border-radius: 6px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.rbc-btn-group button {
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  background-color: white;
+  border: 1px solid #d1d5db;
+  transition: all 0.2s;
+}
+
+.rbc-btn-group button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.rbc-btn-group button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+
+.rbc-btn-group button:not(:first-child) {
+  border-left: 0;
+}
+
+.rbc-btn-group button:hover {
+  background-color: #f3f4f6;
+  color: #111827;
+}
+
+.rbc-btn-group button:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px #3b82f6;
+}
+
+.rbc-btn-group button.rbc-active {
+  background-color: #3b82f6;
+  color: white;
+  border-color: #3b82f6;
+}
+
+.rbc-btn-group button.rbc-active:hover {
+  background-color: #2563eb;
+  border-color: #2563eb;
+}
+
+/* Label del toolbar */
+.rbc-toolbar-label {
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0 16px;
+}
+
+/* Botones de navegación */
+.rbc-toolbar button:not(.rbc-btn-group button) {
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  background-color: white;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.rbc-toolbar button:not(.rbc-btn-group button):hover {
+  background-color: #f3f4f6;
+  color: #111827;
+}
+
+.rbc-toolbar button:not(.rbc-btn-group button):focus {
+  outline: none;
+  box-shadow: 0 0 0 2px #3b82f6;
+}
+
+/* Estados de eventos personalizados por resultado */
+.rbc-event.event-exitoso {
+  background-color: #10b981;
+  color: white;
+}
+
+.rbc-event.event-sin-respuesta {
+  background-color: #f59e0b;
+  color: white;
+}
+
+.rbc-event.event-ocupado {
+  background-color: #ef4444;
+  color: white;
+}
+
+.rbc-event.event-reagendado {
+  background-color: #8b5cf6;
+  color: white;
+}
+
+.rbc-event.event-default {
+  background-color: #6b7280;
+  color: white;
+}
+
+/* Popup */
+.rbc-overlay {
+  background-color: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+.rbc-overlay-header {
+  padding: 12px;
+  background-color: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  font-weight: 600;
+  color: #374151;
+}
+
+/* Show more link */
+.rbc-show-more {
+  color: #2563eb;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.rbc-show-more:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+/* Responsivo */
+@media (max-width: 768px) {
+  .rbc-toolbar {
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  .rbc-toolbar .rbc-btn-group {
+    width: 100%;
+  }
+  
+  .rbc-toolbar button {
+    flex: 1;
+    font-size: 12px;
+  }
+  
+  .rbc-toolbar-label {
+    font-size: 16px;
+    order: -1;
+    margin: 0 0 8px 0;
+  }
+
+  .rbc-event {
+    font-size: 10px;
+    padding: 1px 4px;
+  }
+}

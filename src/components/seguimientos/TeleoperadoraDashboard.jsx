@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import { useCallStore, useAppStore, USER_ROLES } from '../../stores';
+import { useSeguimientosStore } from '../../stores/useSeguimientosStore';
+import usePermissions from '../../hooks/usePermissions';
 import { seguimientoService } from '../../services/seguimientoService';
 import MetricCard from './MetricCard';
 import BeneficiaryCard from './BeneficiaryCard';
@@ -30,9 +32,15 @@ import NewContactForm from './NewContactForm';
  * y registrar contactos con reglas de 15/30 días
  */
 const TeleoperadoraDashboard = () => {
-  const { user } = useAuth();
+  const { user: authUser } = useAuth();
+  const { user, isAdmin } = usePermissions(); // Usar usePermissions para obtener rol correcto
   const { operators, getAllAssignments, getAssignmentsByEmail } = useAppStore();
   const { callData } = useCallStore();
+  const { 
+    addSeguimiento, 
+    initializeSubscription, 
+    clearStore 
+  } = useSeguimientosStore();
 
   // Estados principales
   const [beneficiarios, setBeneficiarios] = useState([]);
@@ -45,17 +53,26 @@ const TeleoperadoraDashboard = () => {
   // Estados de la UI
   const [activeFilter, setActiveFilter] = useState('todos'); // todos, al-dia, pendientes, urgentes
 
-  // Determinar si el usuario es admin o teleoperadora
-  const isAdmin = user?.role === USER_ROLES.ADMIN || user?.email?.includes('admin');
+  // Usar datos de usePermissions que ya tiene la lógica de admin corregida
   const currentOperatorName = isAdmin ? 'Administrador' : user?.displayName || user?.email;
 
   // Cargar datos iniciales - DIRECTO DESDE FIREBASE
   useEffect(() => {
     if (user) {
       console.log('📊 Usuario autenticado, cargando datos directamente desde Firebase...');
+      console.log('🔍 Rol detectado:', user.role, 'Es admin:', isAdmin);
+      
+      // Inicializar el store de seguimientos para sincronización en tiempo real
+      initializeSubscription(user.uid || authUser.uid);
+      
       loadDashboardData();
     }
-  }, [user?.uid]);
+
+    // Cleanup al desmontar el componente
+    return () => {
+      clearStore();
+    };
+  }, [user?.uid || authUser?.uid, initializeSubscription, clearStore, isAdmin]);
 
   /**
    * Carga todos los datos necesarios para el dashboard - CONEXIÓN DIRECTA A FIREBASE + EXCEL
@@ -68,7 +85,7 @@ const TeleoperadoraDashboard = () => {
     
     setIsLoading(true);
     try {
-      console.log('🔍 Cargando datos para:', user?.email);
+      console.log('🔍 Cargando datos para:', authUser?.email, '(rol:', user?.role, ')');
       
       // 1. Obtener seguimientos manuales de Firebase
       const seguimientosFirebase = await seguimientoService.getSeguimientos(user.uid);
@@ -181,7 +198,7 @@ const TeleoperadoraDashboard = () => {
             console.log(`🎯 RESULTADO FINAL: ${beneficiariosAsignados.length} beneficiarios para dashboard de ${matchingOperator.name}`);
             
           } else {
-            console.warn('❌ No se encontró operador en Firebase para:', user?.email);
+            console.warn('❌ No se encontró operador en Firebase para:', authUser?.email);
             
             // Mostrar operadores disponibles para debugging
             console.log('👥 Operadores disponibles en Firebase:', operatorsFromFirebase.map(op => ({
@@ -200,7 +217,7 @@ const TeleoperadoraDashboard = () => {
           
           if (currentOperators.length > 0) {
             console.log('📊 Store tiene operadores, usando fallback...');
-            const userEmail = user?.email?.toLowerCase().trim();
+            const userEmail = authUser?.email?.toLowerCase().trim();
             
             const matchingOperator = currentOperators.find(op => 
               op.email?.toLowerCase().trim() === userEmail
@@ -357,16 +374,15 @@ const TeleoperadoraDashboard = () => {
   };
 
   /**
-   * Guarda un nuevo seguimiento en Firebase
+   * Guarda un nuevo seguimiento en Firebase usando el store de seguimientos
    */
   const handleSaveNewContact = async (contactData) => {
     try {
       console.log('💾 Guardando nuevo seguimiento:', contactData);
       
-      // Convertir fecha a ISO manteniendo zona horaria chilena
-      const convertToChileanISO = (dateTimeLocal) => {
+      // Convertir fecha a timestamp para consistencia con Firestore
+      const convertToTimestamp = (dateTimeLocal) => {
         // dateTimeLocal viene como "YYYY-MM-DDTHH:mm" del input datetime-local
-        // Lo interpretamos como hora chilena y lo convertimos a ISO
         const [date, time] = dateTimeLocal.split('T');
         const [year, month, day] = date.split('-');
         const [hours, minutes] = time.split(':');
@@ -381,34 +397,31 @@ const TeleoperadoraDashboard = () => {
         chileanDate.setSeconds(0);
         chileanDate.setMilliseconds(0);
         
-        return chileanDate.toISOString();
+        return chileanDate;
       };
       
       console.log('🕐 Fecha original:', contactData.fechaContacto);
-      console.log('🇨🇱 Fecha convertida a ISO chileno:', convertToChileanISO(contactData.fechaContacto));
+      console.log('🇨🇱 Fecha convertida:', convertToTimestamp(contactData.fechaContacto));
       
-      // Preparar datos para Firebase
+      // Preparar datos para el store de seguimientos
       const seguimientoData = {
         beneficiarioId: contactData.beneficiarioId,
-        beneficiario: contactData.beneficiario,
+        beneficiarioNombre: contactData.beneficiario,
         telefono: contactData.telefono,
         tipoContacto: contactData.tipoContacto,
-        tipoResultado: contactData.tipoResultado,
+        resultado: contactData.tipoResultado, // Campo que usa el store para colores
         observaciones: contactData.observaciones,
-        fechaContacto: convertToChileanISO(contactData.fechaContacto),
+        fechaContacto: convertToTimestamp(contactData.fechaContacto),
         operadorEmail: user?.email,
         operadorNombre: user?.displayName || user?.email
       };
 
-      // Guardar en Firebase
-      const seguimientoId = await seguimientoService.createSeguimiento(
-        user.uid, 
-        seguimientoData
-      );
+      // Usar el store de seguimientos para guardar (incluye sincronización automática)
+      await addSeguimiento(seguimientoData);
 
-      console.log('✅ Seguimiento guardado con ID:', seguimientoId);
+      console.log('✅ Seguimiento guardado exitosamente y sincronizado con calendario');
       
-      // Recargar datos para mostrar el nuevo seguimiento
+      // Recargar datos del dashboard local para mostrar el nuevo seguimiento
       await loadDashboardData();
       
       // Cerrar modal

@@ -6,6 +6,8 @@ export { default as useCallStore } from './useCallStore';
 export { default as useAppStore } from './useAppStore';
 export { default as useBeneficiaryStore } from './useBeneficiaryStore';
 export { default as useUserManagementStore } from './useUserManagementStore';
+export { useSeguimientosStore } from './useSeguimientosStore';
+export { useGestionesStore, GESTION_ESTADOS, ESTADO_COLORS } from './useGestionesStore';
 
 // Exportar hooks combinados útiles
 export const useStores = () => ({
@@ -13,7 +15,9 @@ export const useStores = () => ({
   callStore: useCallStore,
   appStore: useAppStore,
   beneficiaryStore: useBeneficiaryStore,
-  userManagementStore: useUserManagementStore
+  userManagementStore: useUserManagementStore,
+  seguimientosStore: useSeguimientosStore,
+  gestionesStore: useGestionesStore
 });
 
 // Estados y constantes para auditoría de llamadas

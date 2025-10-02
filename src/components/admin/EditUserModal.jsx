@@ -2,15 +2,20 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { X, User, Shield, Save, AlertCircle } from 'lucide-react';
 
-const EditUserModal = ({ user, roles, onSave, onClose, isLoading }) => {
+const EditUserModal = ({ isOpen, user, roles, onSave, onClose, isLoading }) => {
   const [formData, setFormData] = useState({
-    displayName: user.displayName || '',
-    role: user.role || 'teleoperadora',
-    isActive: user.isActive !== false
+    displayName: user?.displayName || '',
+    role: user?.role || 'teleoperadora',
+    isActive: user?.isActive !== false
   });
 
   const [errors, setErrors] = useState({});
   const modalRef = useRef(null);
+
+  // Si no está abierto o no hay usuario, no renderizar el modal
+  if (!isOpen || !user) {
+    return null;
+  }
 
   const handleChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -74,7 +79,7 @@ const EditUserModal = ({ user, roles, onSave, onClose, isLoading }) => {
             </label>
             <input
               type="email"
-              value={user.email}
+              value={user?.email || ''}
               disabled
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-500"
             />
@@ -105,12 +110,12 @@ const EditUserModal = ({ user, roles, onSave, onClose, isLoading }) => {
             <select
               value={formData.role}
               onChange={(e) => handleChange('role', e.target.value)}
-              disabled={user.role === 'super_admin'}
+              disabled={user?.role === 'super_admin'}
               className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 ${
                 errors.role ? 'border-red-300' : 'border-gray-300 dark:border-gray-600'
               } bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:bg-gray-100 disabled:text-gray-500`}
             >
-              {roles.filter(role => role.id !== 'super_admin' || user.role === 'super_admin').map(role => (
+              {roles.filter(role => role.id !== 'super_admin' || user?.role === 'super_admin').map(role => (
                 <option key={role.id} value={role.id}>
                   {role.name}
                 </option>
@@ -127,7 +132,7 @@ const EditUserModal = ({ user, roles, onSave, onClose, isLoading }) => {
                 type="checkbox"
                 checked={formData.isActive}
                 onChange={(e) => handleChange('isActive', e.target.checked)}
-                disabled={user.role === 'super_admin'}
+                disabled={user?.role === 'super_admin'}
                 className="rounded border-gray-300 text-purple-600 focus:ring-purple-500 disabled:opacity-50"
               />
               <span className="text-sm text-gray-700 dark:text-gray-300">Usuario activo</span>

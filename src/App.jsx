@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, BarChart3, PieChart, Calendar, AlertCircle, Plus, Edit, Trash2, UserPlus, FileSpreadsheet, Save, X, LogOut, User, Zap, Database, Activity, Settings } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useAuth } from './AuthContext';
-import { operatorService, assignmentService, callDataService } from './firestoreService';
+import { operatorService, assignmentService, callDataService, resetErrorState } from './firestoreService';
 import { useCallStore, useAppStore } from './stores';
 import AuditDemo from './components/examples/AuditDemo';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -10,6 +10,8 @@ import ZustandTest from './test/ZustandTest';
 import BeneficiariosBase from './components/BeneficiariosBase';
 import MetricsTestPanel from './components/MetricsTestPanel';
 import TeleoperadoraDashboard from './components/seguimientos/TeleoperadoraDashboard';
+import TeleoperadoraCalendar from './components/seguimientos/TeleoperadoraCalendar';
+import GestionesModule from './components/gestiones/GestionesModule';
 import SuperAdminDashboard from './components/admin/SuperAdminDashboard';
 import usePermissions from './hooks/usePermissions';
 
@@ -99,13 +101,6 @@ const TeleasistenciaApp = () => {
   // Estados locales (mantenemos algunos para compatibilidad durante la transición)
   const [activeTab, setActiveTab] = useState('dashboard');
   
-  // ✅ ACTUALIZAR TAB POR DEFECTO SEGÚN PERMISOS
-  useEffect(() => {
-    if (defaultTab && activeTab === 'dashboard' && !checkModuleAccess('dashboard')) {
-      setActiveTab(defaultTab);
-    }
-  }, [defaultTab, checkModuleAccess]);
-  
   const [callData, setCallData] = useState([]);
   const [assignments, setAssignments] = useState([]);
   // ✅ ELIMINADO: followUpHistory - ahora usamos solo datos de Zustand con formateo correcto de fechas
@@ -135,18 +130,20 @@ const TeleasistenciaApp = () => {
   
   // 🔥 SINCRONIZACIÓN AUTOMÁTICA: Sincronizar estado local con Zustand cada vez que cambie
   useEffect(() => {
-    if (operators.length > 0) {
+    if (operators.length > 0 && zustandOperators.length !== operators.length) {
       // console.log('🔄 Sincronizando operators locales con Zustand:', operators.length);
       setZustandOperators(operators);
     }
-  }, [operators, setZustandOperators]);
+  }, [operators.length, zustandOperators.length, setZustandOperators]);
   
   useEffect(() => {
-    if (Object.keys(operatorAssignments).length > 0) {
-      // console.log('🔄 Sincronizando operatorAssignments locales con Zustand:', Object.keys(operatorAssignments).length);
+    const assignmentsCount = Object.keys(operatorAssignments).length;
+    const zustandCount = Object.keys(zustandOperatorAssignments).length;
+    if (assignmentsCount > 0 && assignmentsCount !== zustandCount) {
+      // console.log('🔄 Sincronizando operatorAssignments locales con Zustand:', assignmentsCount);
       setZustandOperatorAssignments(operatorAssignments);
     }
-  }, [operatorAssignments, setZustandOperatorAssignments]);
+  }, [Object.keys(operatorAssignments).length, Object.keys(zustandOperatorAssignments).length, setZustandOperatorAssignments]);
   
   // Estados para búsqueda de beneficiarios
   const [showBeneficiarySearch, setShowBeneficiarySearch] = useState(false);
@@ -167,32 +164,91 @@ const TeleasistenciaApp = () => {
   const [dataLoaded, setDataLoaded] = useState(false);
 
   useEffect(() => {
-    if (user && !dataLoaded && !loadingRef.current) {
+    if (user && userProfile && !dataLoaded && !loadingRef.current) {
+      console.log('🚀 Triggering loadUserData:', {
+        user: !!user,
+        userProfile: !!userProfile,
+        email: userProfile?.email,
+        role: userProfile?.role,
+        dataLoaded
+      });
+      
+      // 🔥 RESETEAR ERRORES DE FIRESTORE PARA NUEVO USUARIO
+      resetErrorState(user.uid);
+      
       loadUserData();
     }
-  }, [user, dataLoaded]);
+  }, [user, userProfile, dataLoaded]);
+
+  // 🔥 FIX CRÍTICO: Monitorear cambios en rol de usuario para forzar recarga
+  useEffect(() => {
+    if (user && userProfile && dataLoaded) {
+      // Verificar si el usuario es admin pero no tiene datos cargados
+      const isAdminUser = userProfile?.role === 'admin' || userProfile?.role === 'super_admin' || 
+                         userProfile?.email === 'roberto@mistatas.com' || userProfile?.email === 'carolina@mistatas.com';
+      
+      if (isAdminUser) {
+        const hasData = operators.length > 0 && Object.keys(operatorAssignments).length > 0;
+        
+        if (!hasData && !loadingRef.current) {
+          console.log('🚨 ADMIN SIN DATOS DETECTADO - Forzando recarga:', {
+            email: userProfile.email,
+            role: userProfile.role,
+            operadores: operators.length,
+            asignaciones: Object.keys(operatorAssignments).length
+          });
+          
+          // Forzar recarga de datos
+          setDataLoaded(false);
+          setTimeout(() => {
+            if (!loadingRef.current) {
+              loadUserData();
+            }
+          }, 100);
+        }
+      }
+    }
+  }, [userProfile?.role, userProfile?.email, operators.length, Object.keys(operatorAssignments).length]);
 
   // 🔥 SINCRONIZACIÓN INICIAL: Forzar sincronización al cargar la app
   useEffect(() => {
-    if (dataLoaded && operators.length > 0) {
-      // Logs comentados para evitar spam en consola
-      // console.log('🔥 FORZANDO SINCRONIZACIÓN INICIAL CON ZUSTAND');
-      // console.log('📊 Operators locales:', operators.length);
-      // console.log('📊 OperatorAssignments locales:', Object.keys(operatorAssignments).length);
+    if (dataLoaded && operators.length > 0 && !loadingRef.current) {
+      // Verificar si realmente necesitamos sincronizar
+      const needsSync = zustandOperators.length === 0 || Object.keys(zustandOperatorAssignments).length === 0;
       
-      setZustandOperators(operators);
-      setZustandOperatorAssignments(operatorAssignments);
-      
-      // Verificar sincronización sin spam
-      setTimeout(() => {
-        const { operators: zOperators, operatorAssignments: zAssignments } = useAppStore.getState();
-        // console.log('✅ Verificación post-sincronización:', {
-        //   zustandOperators: zOperators?.length || 0,
-        //   zustandAssignments: Object.keys(zAssignments || {}).length
-        // });
-      }, 500);
+      if (needsSync) {
+        // Logs comentados para evitar spam en consola
+        // console.log('🔥 FORZANDO SINCRONIZACIÓN INICIAL CON ZUSTAND');
+        // console.log('📊 Operators locales:', operators.length);
+        // console.log('📊 OperatorAssignments locales:', Object.keys(operatorAssignments).length);
+        
+        setZustandOperators(operators);
+        setZustandOperatorAssignments(operatorAssignments);
+        
+        // Verificar sincronización sin spam
+        setTimeout(() => {
+          const { operators: zOperators, operatorAssignments: zAssignments } = useAppStore.getState();
+          // console.log('✅ Verificación post-sincronización:', {
+          //   zustandOperators: zOperators?.length || 0,
+          //   zustandAssignments: Object.keys(zAssignments || {}).length
+          // });
+        }, 500);
+      }
     }
-  }, [dataLoaded, operators, operatorAssignments, setZustandOperators, setZustandOperatorAssignments]);
+  }, [dataLoaded, operators.length, Object.keys(operatorAssignments).length]);
+
+  // ✅ ACTUALIZAR TAB POR DEFECTO SEGÚN PERMISOS
+  useEffect(() => {
+    // Solo cambiar si explícitamente no tiene acceso al dashboard y hay un defaultTab diferente
+    if (defaultTab && 
+        defaultTab !== 'dashboard' && 
+        activeTab === 'dashboard' && 
+        !checkModuleAccess('dashboard') && 
+        dataLoaded) {
+      console.log('🔄 Cambiando tab por falta de permisos de dashboard:', { from: activeTab, to: defaultTab });
+      setActiveTab(defaultTab);
+    }
+  }, [defaultTab, checkModuleAccess, dataLoaded, activeTab]);
 
   // OPTIMIZACIÓN: Re-analizar solo cuando sea necesario con debounce
   useEffect(() => {
@@ -215,6 +271,23 @@ const TeleasistenciaApp = () => {
     setFirebaseStatus('connecting');
     
     try {
+      // 🔥 VERIFICACIÓN CRÍTICA: Asegurar que tenemos perfil de usuario
+      if (!userProfile) {
+        console.log('⚠️ userProfile no disponible aún, intentando nuevamente en 1 segundo...');
+        loadingRef.current = false;
+        setTimeout(() => {
+          if (user && !dataLoaded) {
+            loadUserData();
+          }
+        }, 1000);
+        return;
+      }
+      
+      console.log('✅ Perfil de usuario disponible:', {
+        email: userProfile.email,
+        role: userProfile.role
+      });
+      
       // 🔥 CARGAR DATOS GENERALES DEL SISTEMA PRIMERO
       console.log('📥 Cargando datos generales del sistema...');
       const { loadOperators, loadAssignments } = useAppStore.getState();
@@ -233,12 +306,59 @@ const TeleasistenciaApp = () => {
         totalAsignaciones: Object.values(allAssignments || {}).flat().length
       });
       
-      // OPTIMIZACIÓN: Cargar datos específicos del usuario en paralelo
-      const [userOperators, userAssignments, userCallData] = await Promise.all([
-        operatorService.getByUser(user.uid),
-        assignmentService.getAllUserAssignments(user.uid),
-        callDataService.getCallData(user.uid)
-      ]);
+      // OPTIMIZACIÓN: Cargar datos específicos basados en rol del usuario
+      let userOperators, userAssignments, userCallData;
+      
+      // 🔥 LÓGICA CORREGIDA: Admin ve todos los datos, teleoperadora solo los suyos
+      const isAdminUser = userProfile?.role === 'admin' || userProfile?.role === 'super_admin' || userProfile?.email === 'roberto@mistatas.com' || userProfile?.email === 'carolina@mistatas.com';
+      
+      console.log('🔍 Determinando datos a cargar:', {
+        userEmail: userProfile?.email,
+        userRole: userProfile?.role,
+        isAdminUser: isAdminUser
+      });
+      
+      if (isAdminUser) {
+        console.log('👑 Admin detectado - Cargando TODOS los datos del sistema');
+        // Admin ve todos los datos del sistema
+        const [allSystemOperators, allSystemAssignmentsArray] = await Promise.all([
+          operatorService.getAll(), // Todos los operadores del sistema
+          assignmentService.getAll() // Todas las asignaciones del sistema (array plano)
+        ]);
+        
+        userOperators = allSystemOperators;
+        
+        // Convertir array plano a formato agrupado por operador para compatibilidad
+        const groupedAssignments = {};
+        allSystemAssignmentsArray.forEach(assignment => {
+          const operatorId = assignment.operatorId;
+          if (!groupedAssignments[operatorId]) {
+            groupedAssignments[operatorId] = [];
+          }
+          groupedAssignments[operatorId].push(assignment);
+        });
+        
+        userAssignments = groupedAssignments;
+        userCallData = [];
+        
+        console.log('👑 Admin - Datos del sistema cargados:', {
+          operadores: userOperators?.length || 0,
+          operadoresConAsignaciones: Object.keys(userAssignments).length,
+          totalAsignaciones: allSystemAssignmentsArray?.length || 0
+        });
+      } else {
+        console.log('👤 Teleoperadora detectada - Cargando solo datos del usuario');
+        // Teleoperadora ve solo sus datos
+        const [specificOperators, specificAssignments, specificCallData] = await Promise.all([
+          operatorService.getByUser(user.uid),
+          assignmentService.getAllUserAssignments(user.uid),
+          callDataService.getCallData(user.uid)
+        ]);
+        
+        userOperators = specificOperators;
+        userAssignments = specificAssignments;
+        userCallData = specificCallData;
+      }
       
       // Verificar si la operación fue exitosa
       if (userOperators !== null) {
@@ -415,23 +535,104 @@ const TeleasistenciaApp = () => {
   };
 
   const handleDeleteOperator = async (operatorId) => {
+    // Confirmar eliminación
+    if (!window.confirm('¿Estás seguro de que deseas eliminar esta teleoperadora? Esta acción no se puede deshacer.')) {
+      return;
+    }
+
     try {
-      await operatorService.delete(operatorId);
-      await assignmentService.deleteOperatorAssignments(user.uid, operatorId);
+      console.log('🗑️ Iniciando eliminación de operadora:', operatorId);
       
-      setOperators(operators.filter(op => op.id !== operatorId));
-      // También eliminar sus asignaciones
+      // 1. Intentar eliminar en Firebase (si es posible)
+      try {
+        await operatorService.delete(operatorId);
+        await assignmentService.deleteOperatorAssignments(user.uid, operatorId);
+        console.log('✅ Eliminación exitosa en Firebase');
+      } catch (firebaseError) {
+        console.warn('⚠️ Error en Firebase (continuando con eliminación local):', firebaseError.message);
+        // Continuar con eliminación local incluso si Firebase falla
+      }
+      
+      // 2. Eliminar del estado local (SIEMPRE ejecutar esto)
+      console.log('🔄 Eliminando del estado local...');
+      
+      // Eliminar de operators
+      const updatedOperators = operators.filter(op => op.id !== operatorId);
+      setOperators(updatedOperators);
+      
+      // Eliminar de operatorAssignments
       const newAssignments = { ...operatorAssignments };
       delete newAssignments[operatorId];
       setOperatorAssignments(newAssignments);
       
-      // Actualizar assignments generales
+      // Eliminar de assignments generales
       const filteredAssignments = assignments.filter(a => !a.id.toString().startsWith(`${operatorId}-`));
       setAssignments(filteredAssignments);
+      
+      // 3. Actualizar Zustand stores
+      try {
+        const { removeOperator } = useAppStore.getState();
+        if (removeOperator) {
+          removeOperator(operatorId);
+          console.log('✅ Eliminado del Zustand store');
+        }
+      } catch (zustandError) {
+        console.warn('⚠️ Error actualizando Zustand store:', zustandError.message);
+      }
+      
+      console.log('✅ Teleoperadora eliminada exitosamente');
+      alert('✅ Teleoperadora eliminada exitosamente');
+      
     } catch (error) {
-      console.error('Error deleting operator:', error);
-      alert('Error al eliminar teleoperador. Intenta nuevamente.');
+      console.error('❌ Error eliminando teleoperadora:', error);
+      alert('❌ Error al eliminar teleoperadora. Intenta nuevamente o contacta al administrador.');
     }
+  };
+
+  // 🧹 FUNCIÓN DE LIMPIEZA MASIVA PARA TELEOPERADORAS FICTICIAS
+  const handleBulkCleanupOperators = () => {
+    const fictitiousNames = [
+      'javiera reyes alvarado',
+      'javiera valdivia', 
+      'maría gonzález',
+      'teleoperadora ejemplo',
+      'demo operator',
+      'operadora prueba',
+      'test operator'
+    ];
+
+    const operatorsToDelete = operators.filter(op => 
+      fictitiousNames.some(name => 
+        op.name?.toLowerCase().includes(name.toLowerCase()) ||
+        op.email?.toLowerCase().includes(name.toLowerCase())
+      )
+    );
+
+    if (operatorsToDelete.length === 0) {
+      alert('✅ No se encontraron teleoperadoras ficticias para eliminar.');
+      return;
+    }
+
+    const confirmMsg = `¿Estás seguro de que deseas eliminar ${operatorsToDelete.length} teleoperadoras ficticias?\n\n` +
+      operatorsToDelete.map(op => `• ${op.name} (${op.email})`).join('\n') +
+      '\n\nEsta acción no se puede deshacer.';
+
+    if (!window.confirm(confirmMsg)) {
+      return;
+    }
+
+    console.log('🧹 Iniciando limpieza masiva de teleoperadoras ficticias...');
+    
+    operatorsToDelete.forEach(async (operator) => {
+      try {
+        await handleDeleteOperator(operator.id);
+        console.log(`✅ Eliminada: ${operator.name}`);
+      } catch (error) {
+        console.error(`❌ Error eliminando ${operator.name}:`, error);
+      }
+    });
+
+    alert(`✅ Proceso de limpieza iniciado para ${operatorsToDelete.length} teleoperadoras ficticias.`);
   };
 
   const handleFileUploadForOperator = (event, operatorId) => {
@@ -1175,6 +1376,8 @@ const TeleasistenciaApp = () => {
       assignments: Users,
       beneficiaries: Database,
       seguimientos: Activity,
+      calendar: Calendar,
+      gestiones: Users,
       history: Clock,
       audit: BarChart3,
       reports: PieChart,
@@ -1398,11 +1601,22 @@ const TeleasistenciaApp = () => {
   const Dashboard = () => {
     // 🔧 SINCRONIZACIÓN: Si Zustand no tiene datos pero el estado local sí, sincronizar
     React.useEffect(() => {
-      if (callData.length > 0 && (!zustandCallData || zustandCallData.length === 0)) {
-        console.log('🔄 Sincronizando datos locales con Zustand:', callData.length);
-        setZustandCallData(callData, 'sync');
-      }
-    }, [callData, zustandCallData, setZustandCallData]);
+      // Usar setTimeout para evitar setState durante render
+      const syncData = () => {
+        // Solo sincronizar si realmente hay una diferencia significativa y no estamos en un bucle
+        if (callData.length > 0 && 
+            (!zustandCallData || zustandCallData.length === 0) && 
+            !isLoading) {
+          console.log('🔄 Sincronizando datos locales con Zustand:', callData.length);
+          setZustandCallData(callData, 'sync');
+        }
+      };
+
+      // Ejecutar en el próximo tick para evitar warning de setState durante render
+      const timeoutId = setTimeout(syncData, 0);
+      
+      return () => clearTimeout(timeoutId);
+    }, [callData.length, zustandCallData?.length, setZustandCallData, isLoading]);
 
     // ✅ USAR MÉTRICAS DE ZUSTAND EN LUGAR DE ESTADO LOCAL
     const metrics = zustandCallMetrics || {
@@ -1649,52 +1863,7 @@ const TeleasistenciaApp = () => {
         </div>
       </div>
 
-      {/* 🚀 MÓDULOS DE ACCESO RÁPIDO */}
-      <div className="bg-white rounded-xl shadow-lg p-6">
-        <h3 className="text-lg font-semibold mb-6">🚀 Acceso Rápido a Módulos</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div 
-            onClick={() => setActiveTab('calls')}
-            className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-6 border border-green-200 cursor-pointer hover:shadow-md transition-all"
-          >
-            <div className="flex items-center justify-center mb-4">
-              <div className="w-16 h-16 bg-green-500 rounded-lg flex items-center justify-center">
-                <Phone className="w-8 h-8 text-white" />
-              </div>
-            </div>
-            <h4 className="text-lg font-semibold text-green-800 mb-2">Registro de Llamadas</h4>
-            <p className="text-sm text-green-700">Sube historiales Excel, analiza resultados y clasifica por beneficiario y teleoperadora.</p>
-          </div>
-          
-          <div 
-            onClick={() => setActiveTab('assignments')}
-            className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-6 border border-blue-200 cursor-pointer hover:shadow-md transition-all"
-          >
-            <div className="flex items-center justify-center mb-4">
-              <div className="w-16 h-16 bg-blue-500 rounded-lg flex items-center justify-center">
-                <Users className="w-8 h-8 text-white" />
-              </div>
-            </div>
-            <h4 className="text-lg font-semibold text-blue-800 mb-2">Asignaciones</h4>
-            <p className="text-sm text-blue-700">Gestiona relaciones entre beneficiarios y teleoperadoras de manera eficiente.</p>
-          </div>
-          
-          <div 
-            onClick={() => setActiveTab('history')}
-            className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-6 border border-purple-200 cursor-pointer hover:shadow-md transition-all"
-          >
-            <div className="flex items-center justify-center mb-4">
-              <div className="w-16 h-16 bg-purple-500 rounded-lg flex items-center justify-center">
-                <Clock className="w-8 h-8 text-white" />
-              </div>
-            </div>
-            <h4 className="text-lg font-semibold text-purple-800 mb-2">Historial de Seguimientos</h4>
-            <p className="text-sm text-purple-700">Clasifica beneficiarios por frecuencia y estado de contacto para seguimiento.</p>
-          </div>
-        </div>
-      </div>
-
-      {/* 📊 TABLA DETALLADA DE OPERADORAS */}
+      {/*  TABLA DETALLADA DE OPERADORAS */}
       {finalOperatorMetrics.length > 0 && (
         <div className="bg-white rounded-xl shadow-lg p-6">
           <h3 className="text-lg font-semibold mb-4 flex items-center">
@@ -2021,13 +2190,24 @@ const TeleasistenciaApp = () => {
               Gestiona teleoperadores y sus asignaciones de beneficiarios
             </p>
           </div>
-          <button
-            onClick={() => setShowCreateOperator(true)}
-            className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2"
-          >
-            <UserPlus className="w-4 h-4" />
-            Crear Teleoperador
-          </button>
+          <div className="flex gap-3">
+            {/* Botón de limpieza masiva */}
+            <button
+              onClick={handleBulkCleanupOperators}
+              className="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition-colors flex items-center gap-2"
+              title="Eliminar teleoperadoras ficticias de prueba"
+            >
+              <Trash2 className="w-4 h-4" />
+              Limpiar Ficticias
+            </button>
+            <button
+              onClick={() => setShowCreateOperator(true)}
+              className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2"
+            >
+              <UserPlus className="w-4 h-4" />
+              Crear Teleoperador
+            </button>
+          </div>
         </div>
 
         {/* Estadísticas rápidas */}
@@ -2572,6 +2752,8 @@ const TeleasistenciaApp = () => {
               {activeTab === 'assignments' && 'Asignaciones'}
               {activeTab === 'beneficiaries' && 'Beneficiarios Base'}
               {activeTab === 'seguimientos' && 'Seguimientos Periódicos'}
+              {activeTab === 'calendar' && 'Ver Calendario'}
+              {activeTab === 'gestiones' && 'Gestiones Colaborativas'}
               {activeTab === 'history' && 'Historial de Seguimientos'}
               {activeTab === 'audit' && 'Auditoría Avanzada'}
               {activeTab === 'metrics' && 'Métricas Avanzadas'}
@@ -2621,6 +2803,16 @@ const TeleasistenciaApp = () => {
           {activeTab === 'seguimientos' && (
             <ErrorBoundary>
               <TeleoperadoraDashboard />
+            </ErrorBoundary>
+          )}
+          {activeTab === 'calendar' && (
+            <ErrorBoundary>
+              <TeleoperadoraCalendar />
+            </ErrorBoundary>
+          )}
+          {activeTab === 'gestiones' && (
+            <ErrorBoundary>
+              <GestionesModule />
             </ErrorBoundary>
           )}
           {activeTab === 'history' && <FollowUpHistory />}

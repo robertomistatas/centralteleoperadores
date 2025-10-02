@@ -163,5 +163,30 @@ service cloud.firestore {
       allow read: if request.auth != null;
       allow write: if request.auth != null; // Cualquier usuario autenticado puede escribir logs
     }
+    
+    // 🤝 GESTIONES COLABORATIVAS - Acceso total para todos los usuarios autenticados
+    match /gestiones/{document} {
+      // Lectura: Todos los usuarios autenticados pueden ver todas las gestiones
+      allow read: if request.auth != null;
+      
+      // Creación: Cualquier usuario autenticado puede crear gestiones
+      allow create: if request.auth != null && 
+        request.resource.data.creadorId == request.auth.uid &&
+        request.resource.data.keys().hasAll(['titulo', 'descripcion', 'creadorId', 'creadorNombre', 'estado']);
+      
+      // Actualización: Cualquier usuario autenticado puede actualizar (para colaboración)
+      // Pero solo el creador o admin puede editar campos básicos
+      allow update: if request.auth != null && (
+        // Cualquiera puede actualizar estado, marcar en curso, finalizar
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['estado', 'updatedAt', 'enCursoPor', 'fechaEnCurso', 'finalizadaPor', 'finalizadaNombre', 'solucion', 'fechaFinalizacion'])) ||
+        // Solo creador o admin pueden editar campos básicos
+        (resource.data.creadorId == request.auth.uid || isAdmin())
+      );
+      
+      // Eliminación: Solo creador o administradores
+      allow delete: if request.auth != null && (
+        resource.data.creadorId == request.auth.uid || isAdmin()
+      );
+    }
   }
 }

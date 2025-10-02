@@ -13,6 +13,7 @@ import {
  * Modal para crear nuevos usuarios
  */
 const CreateUserModal = ({ 
+  isOpen,
   roles, 
   onSave, 
   onClose, 
@@ -98,6 +99,9 @@ const CreateUserModal = ({
       setErrors({ submit: error.message });
     }
   };
+
+  // No renderizar si no está abierto
+  if (!isOpen) return null;
 
   return (
     <motion.div

@@ -26,21 +26,37 @@ const COLLECTIONS = {
   BENEFICIARY_UPLOADS: 'beneficiaryUploads'
 };
 
-// Variable para controlar el logging de errores
-let permissionErrorLogged = false;
+// Variable para controlar el logging de errores por usuario
+const permissionErrorsByUser = new Map();
 
 // Función para resetear el estado de error (útil para testing o reconexión)
-export const resetErrorState = () => {
-  permissionErrorLogged = false;
+export const resetErrorState = (userId = null) => {
+  if (userId) {
+    permissionErrorsByUser.delete(userId);
+  } else {
+    permissionErrorsByUser.clear();
+  }
+};
+
+// Función para obtener el ID del usuario actual
+const getCurrentUserId = () => {
+  try {
+    const user = window.firebase?.auth?.()?.currentUser;
+    return user?.uid || 'anonymous';
+  } catch {
+    return 'anonymous';
+  }
 };
 
 // Helper function para manejar errores de permisos
 const handleFirestoreError = (error, operation) => {
+  const userId = getCurrentUserId();
+  
   if (error.code === 'permission-denied') {
-    if (!permissionErrorLogged) {
-      console.warn('⚠️ Firebase Firestore: Permisos insuficientes. La aplicación funciona en modo demo.');
+    if (!permissionErrorsByUser.has(userId)) {
+      console.warn(`⚠️ Firebase Firestore: Permisos insuficientes para usuario ${userId}. La aplicación funciona en modo demo.`);
       console.info('💡 Para habilitar persistencia, configura Firestore siguiendo las instrucciones en FIREBASE_SETUP.md');
-      permissionErrorLogged = true;
+      permissionErrorsByUser.set(userId, true);
     }
     return null;
   }
@@ -74,8 +90,9 @@ export const operatorService = {
 
   // Obtener operadores del usuario
   async getByUser(userId) {
-    if (permissionErrorLogged) {
-      return []; // Retornar inmediatamente si ya sabemos que hay problemas de permisos
+    const currentUserId = getCurrentUserId();
+    if (permissionErrorsByUser.has(currentUserId)) {
+      return []; // Retornar inmediatamente si ya sabemos que hay problemas de permisos para este usuario
     }
     
     try {
@@ -130,8 +147,10 @@ export const operatorService = {
 
   // 🆕 Obtener TODOS los operadores (para admin)
   async getAll() {
-    if (permissionErrorLogged) {
-      return []; // Retornar inmediatamente si ya sabemos que hay problemas de permisos
+    const currentUserId = getCurrentUserId();
+    if (permissionErrorsByUser.has(currentUserId)) {
+      console.log(`⚠️ Omitiendo getAll() para usuario ${currentUserId} debido a errores previos`);
+      return []; // Retornar inmediatamente si ya sabemos que hay problemas de permisos para este usuario
     }
     
     try {
@@ -195,8 +214,9 @@ export const assignmentService = {
 
   // Obtener todas las asignaciones del usuario
   async getAllUserAssignments(userId) {
-    if (permissionErrorLogged) {
-      return {}; // Retornar inmediatamente si ya sabemos que hay problemas de permisos
+    const currentUserId = getCurrentUserId();
+    if (permissionErrorsByUser.has(currentUserId)) {
+      return {}; // Retornar inmediatamente si ya sabemos que hay problemas de permisos para este usuario
     }
     
     try {
@@ -231,8 +251,10 @@ export const assignmentService = {
 
   // 🆕 Obtener TODAS las asignaciones (para admin)
   async getAll() {
-    if (permissionErrorLogged) {
-      return []; // Retornar inmediatamente si ya sabemos que hay problemas de permisos
+    const currentUserId = getCurrentUserId();
+    if (permissionErrorsByUser.has(currentUserId)) {
+      console.log(`⚠️ Omitiendo getAll() para usuario ${currentUserId} debido a errores previos`);
+      return []; // Retornar inmediatamente si ya sabemos que hay problemas de permisos para este usuario
     }
     
     try {
@@ -282,8 +304,9 @@ export const callDataService = {
 
   // Obtener datos de llamadas
   async getCallData(userId) {
-    if (permissionErrorLogged) {
-      return []; // Retornar inmediatamente si ya sabemos que hay problemas de permisos
+    const currentUserId = getCurrentUserId();
+    if (permissionErrorsByUser.has(currentUserId)) {
+      return []; // Retornar inmediatamente si ya sabemos que hay problemas de permisos para este usuario
     }
     
     try {

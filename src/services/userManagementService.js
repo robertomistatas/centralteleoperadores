@@ -319,6 +319,45 @@ class UserManagementService {
   }
 
   /**
+   * Obtener perfil de usuario por email
+   */
+  async getUserProfileByEmail(email) {
+    try {
+      if (!email) {
+        console.log('❌ getUserProfileByEmail: Email vacío');
+        return null;
+      }
+      
+      const normalizedEmail = email.toLowerCase().trim();
+      console.log('🔍 getUserProfileByEmail: Buscando perfil para:', normalizedEmail);
+      
+      const q = query(
+        collection(db, this.collection), 
+        where('email', '==', normalizedEmail)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      console.log('📊 getUserProfileByEmail: Documentos encontrados:', querySnapshot.size);
+      
+      if (!querySnapshot.empty) {
+        const doc = querySnapshot.docs[0];
+        const profile = {
+          id: doc.id,
+          ...doc.data()
+        };
+        console.log('✅ getUserProfileByEmail: Perfil encontrado:', profile);
+        return profile;
+      }
+
+      console.log('❌ getUserProfileByEmail: No se encontró perfil para:', normalizedEmail);
+      return null;
+    } catch (error) {
+      console.error('❌ Error obteniendo perfil por email:', error);
+      return null;
+    }
+  }
+
+  /**
    * Obtener perfil de usuario
    */
   async getUserProfile(userId) {

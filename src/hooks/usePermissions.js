@@ -1,6 +1,7 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect, useState } from 'react';
 import { useAuth } from '../AuthContext';
 import useUserManagementStore from '../stores/useUserManagementStore';
+import { userManagementService } from '../services/userManagementService';
 
 /**
  * Hook personalizado para gestión de permisos y roles
@@ -8,53 +9,138 @@ import useUserManagementStore from '../stores/useUserManagementStore';
 export const usePermissions = () => {
   const { user } = useAuth();
   const { roles, getRoleById, getUserPermissions, hasPermission, isSuperAdmin, canAccessModule } = useUserManagementStore();
+  const [userProfile, setUserProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+
+  // Cargar perfil del usuario desde Firestore
+  useEffect(() => {
+    const loadUserProfile = async () => {
+      if (!user?.email) {
+        setUserProfile(null);
+        return;
+      }
+
+      setProfileLoading(true);
+      try {
+        console.log('🔍 Cargando perfil para usuario:', user.email);
+        
+        // Verificar si es super admin por email
+        if (user.email === 'roberto@mistatas.com') {
+          console.log('👑 Usuario identificado como Super Admin');
+          setUserProfile({
+            ...user,
+            role: 'super_admin',
+            isActive: true
+          });
+        } else if (user.email?.toLowerCase() === 'carolina@mistatas.com' || 
+                   user.displayName?.toLowerCase().includes('carolina reyes')) {
+          console.log('👑 Usuario identificado como Carolina Reyes (Admin)');
+          setUserProfile({
+            ...user,
+            role: 'admin',
+            isActive: true
+          });
+        } else {
+          // 🧠 SISTEMA INTELIGENTE: Buscar perfil con múltiples estrategias
+          console.log('📡 Consultando Firestore para email:', user.email);
+          
+          // Estrategia 1: Buscar por email exacto
+          let profile = await userManagementService.getUserProfileByEmail(user.email);
+          
+          // Estrategia 2: Si no encuentra, buscar por UID (usuarios sincronizados)
+          if (!profile && user.uid) {
+            console.log('🔍 Buscando por UID:', user.uid);
+            profile = await userManagementService.getUserProfile(user.uid);
+          }
+          
+          // Estrategia 3: Buscar usuarios pendientes por email
+          if (!profile) {
+            console.log('🔍 Buscando en usuarios pendientes...');
+            try {
+              const { smartUserCreationService } = await import('../services/smartUserCreationService');
+              const pendingUsers = await smartUserCreationService.getPendingUsers();
+              const pendingUser = pendingUsers.find(u => u.email === user.email?.toLowerCase());
+              
+              if (pendingUser) {
+                console.log('✅ Usuario encontrado en pendientes:', pendingUser);
+                profile = {
+                  role: pendingUser.role,
+                  email: pendingUser.email,
+                  displayName: pendingUser.displayName,
+                  isActive: true,
+                  isPending: true
+                };
+              }
+            } catch (error) {
+              console.log('⚠️ Error buscando usuarios pendientes:', error);
+            }
+          }
+          
+          console.log('📄 Perfil obtenido de Firestore:', profile);
+          
+          if (profile) {
+            const finalProfile = {
+              ...user,
+              ...profile,
+              role: profile.role || 'teleoperadora'
+            };
+            console.log('✅ Perfil final aplicado:', finalProfile);
+            setUserProfile(finalProfile);
+          } else {
+            console.log('❌ No se encontró perfil en Firestore, usando rol por defecto');
+            // Usuario sin perfil en Firestore, usar rol por defecto
+            setUserProfile({
+              ...user,
+              role: 'teleoperadora',
+              isActive: true
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error loading user profile:', error);
+        // Fallback a rol por defecto
+        setUserProfile({
+          ...user,
+          role: 'teleoperadora',
+          isActive: true
+        });
+      } finally {
+        setProfileLoading(false);
+      }
+    };
+
+    loadUserProfile();
+  }, [user?.email]);
 
   // Obtener perfil completo del usuario (incluyendo rol)
-  const userProfile = useMemo(() => {
-    if (!user) return null;
-    
-    // Verificar si es super admin por email
-    if (user.email === 'roberto@mistatas.com') {
-      return {
-        ...user,
-        role: 'super_admin',
-        isActive: true
-      };
-    }
-
-    // Para otros usuarios, podrías obtener el perfil desde Firestore
-    // Por ahora, inferir rol básico
-    return {
-      ...user,
-      role: user.role || 'teleoperadora',
-      isActive: user.isActive !== false
-    };
-  }, [user]);
+  const memoizedUserProfile = useMemo(() => {
+    return userProfile;
+  }, [userProfile]);
 
   // Obtener información del rol actual
   const currentRole = useMemo(() => {
-    if (!userProfile?.role) return null;
-    return getRoleById(userProfile.role);
-  }, [userProfile?.role, getRoleById]);
+    if (!memoizedUserProfile?.role) return null;
+    return getRoleById(memoizedUserProfile.role);
+  }, [memoizedUserProfile?.role, getRoleById]);
 
   // Obtener permisos del usuario actual
   const permissions = useMemo(() => {
-    if (!userProfile) return [];
-    return getUserPermissions(userProfile);
-  }, [userProfile, getUserPermissions]);
+    if (!memoizedUserProfile) return [];
+    return getUserPermissions(memoizedUserProfile);
+  }, [memoizedUserProfile, getUserPermissions]);
 
   // Verificar si es super admin
   const isSuper = useMemo(() => {
-    return isSuperAdmin(userProfile);
-  }, [userProfile, isSuperAdmin]);
+    return isSuperAdmin(memoizedUserProfile);
+  }, [memoizedUserProfile, isSuperAdmin]);
 
   // Funciones de verificación de permisos
   const checkPermission = (permission) => {
-    return hasPermission(userProfile, permission);
+    return hasPermission(memoizedUserProfile, permission);
   };
 
   const checkModuleAccess = (module) => {
-    return canAccessModule(userProfile, module);
+    return canAccessModule(memoizedUserProfile, module);
   };
 
   // Verificar acceso a módulos específicos
@@ -63,6 +149,7 @@ export const usePermissions = () => {
   const canViewAssignments = checkModuleAccess('assignments');
   const canViewBeneficiaries = checkModuleAccess('beneficiaries');
   const canViewSeguimientos = checkModuleAccess('seguimientos');
+  const canViewCalendar = checkModuleAccess('seguimientos'); // Usar mismo permiso que seguimientos
   const canViewHistory = checkModuleAccess('history');
   const canViewAudit = checkModuleAccess('audit');
   const canViewReports = checkModuleAccess('reports');
@@ -115,6 +202,21 @@ export const usePermissions = () => {
       });
     }
 
+    if (canViewCalendar) {
+      modules.push({
+        id: 'calendar',
+        label: 'Ver Calendario',
+        icon: 'Calendar'
+      });
+    }
+
+    // ✅ GESTIONES - Visible para TODOS los roles (colaborativo)
+    modules.push({
+      id: 'gestiones',
+      label: 'Gestiones',
+      icon: 'Users'
+    });
+
     if (canViewHistory) {
       modules.push({
         id: 'history',
@@ -162,26 +264,35 @@ export const usePermissions = () => {
 
   // Determinar tab por defecto según permisos
   const defaultTab = useMemo(() => {
-    if (canViewSeguimientos && userProfile?.role === 'teleoperadora') {
+    console.log('🔍 Determinando defaultTab:', {
+      canViewSeguimientos,
+      canViewDashboard,
+      userRole: memoizedUserProfile?.role,
+      visibleModulesCount: visibleModules.length,
+      firstModule: visibleModules[0]?.id
+    });
+
+    if (canViewSeguimientos && memoizedUserProfile?.role === 'teleoperadora') {
       return 'seguimientos';
     }
     if (canViewDashboard) {
       return 'dashboard';
     }
     return visibleModules[0]?.id || 'dashboard';
-  }, [canViewSeguimientos, canViewDashboard, userProfile?.role, visibleModules]);
+  }, [canViewSeguimientos, canViewDashboard, memoizedUserProfile?.role, visibleModules]);
 
   return {
     // Usuario y perfil
-    user: userProfile,
+    user: memoizedUserProfile,
     currentRole,
     permissions,
+    profileLoading,
     
     // Verificaciones generales
     isSuperAdmin: isSuper,
-    isAdmin: userProfile?.role === 'admin' || isSuper,
-    isAuditor: userProfile?.role === 'auditor',
-    isTeleoperadora: userProfile?.role === 'teleoperadora',
+    isAdmin: memoizedUserProfile?.role === 'admin' || isSuper,
+    isAuditor: memoizedUserProfile?.role === 'auditor',
+    isTeleoperadora: memoizedUserProfile?.role === 'teleoperadora',
     
     // Funciones de verificación
     checkPermission,
@@ -193,6 +304,7 @@ export const usePermissions = () => {
     canViewAssignments,
     canViewBeneficiaries,
     canViewSeguimientos,
+    canViewCalendar,
     canViewHistory,
     canViewAudit,
     canViewReports,
