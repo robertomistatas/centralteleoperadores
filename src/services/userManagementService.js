@@ -14,7 +14,9 @@ import {
 import { 
   createUserWithEmailAndPassword,
   updateProfile,
-  deleteUser as deleteAuthUser
+  updateEmail,
+  deleteUser as deleteAuthUser,
+  signInWithEmailAndPassword
 } from 'firebase/auth';
 import { db, auth } from '../firebase';
 
@@ -299,6 +301,121 @@ class UserManagementService {
   }
 
   /**
+   * Actualizar usuario completo (incluyendo Firebase Authentication si es necesario)
+   * @param {string} userId - ID del usuario en Firestore
+   * @param {Object} updateData - Datos a actualizar (email, displayName, phone, role, isActive)
+   * @param {Object} options - Opciones adicionales
+   * @returns {Promise<Object>} Usuario actualizado
+   */
+  async updateUserComplete(userId, updateData, options = {}) {
+    try {
+      console.log('🔄 Actualizando usuario completo:', userId, updateData);
+
+      // 1. Obtener el perfil actual del usuario
+      const userDoc = await this.getUserProfile(userId);
+      if (!userDoc) {
+        throw new Error('Usuario no encontrado');
+      }
+
+      const oldEmail = userDoc.email;
+      const newEmail = updateData.email;
+      const emailChanged = newEmail && oldEmail !== newEmail;
+
+      // 2. Si el email cambió, necesitamos actualizar Firebase Authentication
+      // NOTA: Esto requiere que el usuario target esté autenticado, o usar Admin SDK
+      // Por simplicidad, solo actualizamos Firestore y mostramos advertencia
+      if (emailChanged) {
+        console.warn('⚠️ El email cambió. Actualización en Firestore, pero Firebase Auth requiere Admin SDK para cambios de email.');
+        
+        // Si tenemos acceso al usuario en Auth (poco común), intentamos actualizar
+        // Esto funciona solo si el usuario a editar es el usuario actual logueado
+        try {
+          const currentAuthUser = auth.currentUser;
+          if (currentAuthUser && currentAuthUser.email === oldEmail) {
+            await updateEmail(currentAuthUser, newEmail);
+            console.log('✅ Email actualizado en Firebase Authentication');
+          } else {
+            console.log('ℹ️ El usuario a editar no es el usuario actual. Email actualizado solo en Firestore.');
+            console.log('ℹ️ El usuario deberá actualizar su email desde su propio perfil al iniciar sesión.');
+          }
+        } catch (authError) {
+          console.warn('⚠️ No se pudo actualizar el email en Firebase Auth:', authError.message);
+          // Continuamos con la actualización en Firestore
+        }
+      }
+
+      // 3. Actualizar displayName si cambió
+      if (updateData.displayName && updateData.displayName !== userDoc.displayName) {
+        try {
+          const currentAuthUser = auth.currentUser;
+          if (currentAuthUser && currentAuthUser.email === oldEmail) {
+            await updateProfile(currentAuthUser, {
+              displayName: updateData.displayName
+            });
+            console.log('✅ DisplayName actualizado en Firebase Authentication');
+          }
+        } catch (authError) {
+          console.warn('⚠️ No se pudo actualizar displayName en Firebase Auth:', authError.message);
+        }
+      }
+
+      // 4. Preparar payload para Firestore
+      const firestoreUpdatePayload = {
+        updatedAt: serverTimestamp(),
+        updatedBy: auth.currentUser?.uid
+      };
+
+      if (updateData.email) firestoreUpdatePayload.email = updateData.email.toLowerCase().trim();
+      if (updateData.displayName) firestoreUpdatePayload.displayName = updateData.displayName;
+      if (updateData.phone !== undefined) firestoreUpdatePayload.phone = updateData.phone;
+      if (updateData.role) firestoreUpdatePayload.role = updateData.role;
+      if (updateData.isActive !== undefined) firestoreUpdatePayload.isActive = updateData.isActive;
+
+      // 5. Actualizar en Firestore
+      const docRef = doc(db, this.collection, userId);
+      await updateDoc(docRef, firestoreUpdatePayload);
+
+      console.log('✅ Usuario actualizado completamente en Firestore');
+
+      // 6. Si el email cambió, también actualizar en colección assignments si existe
+      if (emailChanged) {
+        try {
+          // Buscar asignaciones con el email antiguo
+          const assignmentsRef = collection(db, 'assignments');
+          const q = query(assignmentsRef, where('operatorEmail', '==', oldEmail));
+          const assignmentsSnapshot = await getDocs(q);
+
+          // Actualizar cada asignación
+          const updatePromises = [];
+          assignmentsSnapshot.forEach((assignmentDoc) => {
+            updatePromises.push(
+              updateDoc(doc(db, 'assignments', assignmentDoc.id), {
+                operatorEmail: newEmail,
+                updatedAt: serverTimestamp()
+              })
+            );
+          });
+
+          await Promise.all(updatePromises);
+          console.log(`✅ ${assignmentsSnapshot.size} asignaciones actualizadas con nuevo email`);
+        } catch (assignmentError) {
+          console.warn('⚠️ Error actualizando asignaciones:', assignmentError.message);
+        }
+      }
+
+      return {
+        ...userDoc,
+        ...firestoreUpdatePayload,
+        emailChanged,
+        authUpdateSuccess: !emailChanged || !options.requireAuthUpdate
+      };
+    } catch (error) {
+      console.error('❌ Error actualizando usuario completo:', error);
+      throw new Error(`Error al actualizar el usuario: ${error.message}`);
+    }
+  }
+
+  /**
    * Eliminar usuario (soft delete)
    */
   async deleteUser(userId) {
@@ -564,6 +681,184 @@ class UserManagementService {
     };
 
     return errorMessages[error.code] || error.message || 'Error desconocido';
+  }
+
+  /**
+   * 🔥 ACTUALIZACIÓN COMPLETA: Actualiza usuario en todos los lugares
+   * Firestore (users) + Firebase Auth + Asignaciones + Seguimientos + Operators
+   * @param {string} userId - ID del usuario
+   * @param {object} updates - Campos a actualizar
+   * @param {string} oldEmail - Email anterior (para actualizar referencias)
+   * @returns {Promise<object>} - Resultado detallado de la actualización
+   */
+  async updateUserComplete(userId, updates, oldEmail) {
+    try {
+      console.log('🔄 ACTUALIZACIÓN COMPLETA - Iniciando...', { userId, updates, oldEmail });
+      
+      const result = {
+        firestoreUpdated: false,
+        authUpdated: false,
+        assignmentsUpdated: 0,
+        seguimientosUpdated: 0,
+        operatorsUpdated: 0,
+        errors: []
+      };
+
+      // 1. Actualizar Firestore (colección userProfiles)
+      try {
+        await this.updateUser(userId, updates);
+        result.firestoreUpdated = true;
+        console.log('✅ Firestore (userProfiles) actualizado');
+      } catch (error) {
+        console.error('❌ Error actualizando Firestore:', error);
+        result.errors.push({ service: 'firestore-users', error: error.message });
+      }
+
+      // 2. Si se cambió el email, actualizar TODAS las referencias
+      if (updates.email && oldEmail && updates.email !== oldEmail) {
+        console.log('📧 Cambio de email detectado:', { from: oldEmail, to: updates.email });
+        
+        // 2a. Actualizar Firebase Authentication (solo si es usuario real de Auth)
+        try {
+          // Verificar si el usuario tiene un UID real de Firebase Auth
+          const isSyntheticUID = userId.startsWith('smart_') || 
+                                 userId.startsWith('profile-') ||
+                                 !userId.match(/^[a-zA-Z0-9]{28}$/);
+          
+          if (isSyntheticUID) {
+            console.log('ℹ️ Usuario con UID sintético - saltando actualización de Auth:', userId);
+            result.authUpdated = false;
+          } else if (auth.currentUser && auth.currentUser.uid === userId) {
+            await updateEmail(auth.currentUser, updates.email);
+            result.authUpdated = true;
+            console.log('✅ Firebase Auth actualizado');
+          } else {
+            console.log('ℹ️ Usuario diferente al actual - saltando actualización de Auth');
+            result.authUpdated = false;
+          }
+        } catch (error) {
+          console.error('❌ Error actualizando Firebase Auth:', error);
+          result.errors.push({ service: 'firebase-auth', error: error.message });
+        }
+
+        // 2b. 🔥 Actualizar colección 'operators'
+        try {
+          console.log('🔄 Actualizando colección operators...');
+          const operatorsRef = collection(db, 'operators');
+          
+          // Buscar operadores por email viejo O por UID
+          let operatorsQuery;
+          if (isSyntheticUID) {
+            // Para UIDs sintéticos, buscar solo por email
+            operatorsQuery = query(operatorsRef, where('email', '==', oldEmail));
+          } else {
+            // Para UIDs reales, buscar por UID también
+            // Nota: Firebase no permite OR en queries, así que haremos 2 queries
+            operatorsQuery = query(operatorsRef, where('email', '==', oldEmail));
+          }
+          
+          const operatorsSnapshot = await getDocs(operatorsQuery);
+          
+          // También buscar por UID si existe
+          let operatorsByUID = [];
+          if (!isSyntheticUID) {
+            const operatorsByUIDQuery = query(operatorsRef, where('uid', '==', userId));
+            const operatorsByUIDSnapshot = await getDocs(operatorsByUIDQuery);
+            operatorsByUID = operatorsByUIDSnapshot.docs;
+          }
+          
+          // Combinar resultados (evitar duplicados)
+          const operatorDocs = new Map();
+          operatorsSnapshot.forEach(doc => operatorDocs.set(doc.id, doc));
+          operatorsByUID.forEach(doc => operatorDocs.set(doc.id, doc));
+          
+          console.log(`📋 Operadores encontrados: ${operatorDocs.size} (${operatorsSnapshot.size} por email, ${operatorsByUID.length} por UID)`);
+          
+          const operatorUpdates = [];
+          operatorDocs.forEach((docSnapshot) => {
+            const operatorRef = doc(db, 'operators', docSnapshot.id);
+            operatorUpdates.push(
+              updateDoc(operatorRef, {
+                email: updates.email,
+                ...(updates.displayName && { name: updates.displayName }),
+                ...(updates.phone && { phone: updates.phone }),
+                updatedAt: serverTimestamp()
+              })
+            );
+          });
+          
+          await Promise.all(operatorUpdates);
+          result.operatorsUpdated = operatorUpdates.length;
+          console.log(`✅ ${operatorUpdates.length} operadores actualizados en 'operators'`);
+        } catch (error) {
+          console.error('❌ Error actualizando operators:', error);
+          result.errors.push({ service: 'operators', error: error.message });
+        }
+
+        // 2c. 🔥 Actualizar colección 'assignments'
+        try {
+          console.log('🔄 Actualizando colección assignments...');
+          const assignmentsRef = collection(db, 'assignments');
+          const assignmentsQuery = query(assignmentsRef, where('operatorEmail', '==', oldEmail));
+          const assignmentsSnapshot = await getDocs(assignmentsQuery);
+          
+          const assignmentUpdates = [];
+          assignmentsSnapshot.forEach((docSnapshot) => {
+            const assignmentRef = doc(db, 'assignments', docSnapshot.id);
+            assignmentUpdates.push(
+              updateDoc(assignmentRef, {
+                operatorEmail: updates.email,
+                ...(updates.displayName && { operatorName: updates.displayName }),
+                updatedAt: serverTimestamp()
+              })
+            );
+          });
+          
+          await Promise.all(assignmentUpdates);
+          result.assignmentsUpdated = assignmentUpdates.length;
+          console.log(`✅ ${assignmentUpdates.length} asignaciones actualizadas`);
+        } catch (error) {
+          console.error('❌ Error actualizando assignments:', error);
+          result.errors.push({ service: 'assignments', error: error.message });
+        }
+
+        // 2d. 🔥 Actualizar colección 'seguimientos'
+        try {
+          console.log('🔄 Actualizando colección seguimientos...');
+          const seguimientosRef = collection(db, 'seguimientos');
+          const seguimientosQuery = query(seguimientosRef, where('operatorEmail', '==', oldEmail));
+          const seguimientosSnapshot = await getDocs(seguimientosQuery);
+          
+          const seguimientoUpdates = [];
+          seguimientosSnapshot.forEach((docSnapshot) => {
+            const seguimientoRef = doc(db, 'seguimientos', docSnapshot.id);
+            seguimientoUpdates.push(
+              updateDoc(seguimientoRef, {
+                operatorEmail: updates.email,
+                ...(updates.displayName && { operatorName: updates.displayName }),
+                updatedAt: serverTimestamp()
+              })
+            );
+          });
+          
+          await Promise.all(seguimientoUpdates);
+          result.seguimientosUpdated = seguimientoUpdates.length;
+          console.log(`✅ ${seguimientoUpdates.length} seguimientos actualizados`);
+        } catch (error) {
+          console.error('❌ Error actualizando seguimientos:', error);
+          result.errors.push({ service: 'seguimientos', error: error.message });
+        }
+      }
+
+      // Log resumen completo
+      console.log('📊 RESUMEN DE ACTUALIZACIÓN COMPLETA:', result);
+      console.log(`✅ Total actualizado: ${result.operatorsUpdated} operators, ${result.assignmentsUpdated} assignments, ${result.seguimientosUpdated} seguimientos`);
+      
+      return result;
+    } catch (error) {
+      console.error('❌ Error crítico en updateUserComplete:', error);
+      throw error;
+    }
   }
 }
 

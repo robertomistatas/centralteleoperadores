@@ -14,7 +14,7 @@ import {
   enableNetwork,
   disableNetwork
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, auth } from './firebase';
 
 // Colecciones de Firestore
 const COLLECTIONS = {
@@ -41,9 +41,16 @@ export const resetErrorState = (userId = null) => {
 // Función para obtener el ID del usuario actual
 const getCurrentUserId = () => {
   try {
-    const user = window.firebase?.auth?.()?.currentUser;
-    return user?.uid || 'anonymous';
-  } catch {
+    // ✅ Usar la instancia de auth importada correctamente
+    const user = auth.currentUser;
+    if (user && user.uid) {
+      console.log('🔍 Usuario autenticado detectado:', user.uid);
+      return user.uid;
+    }
+    console.warn('⚠️ No hay usuario autenticado en Firebase Auth');
+    return 'anonymous';
+  } catch (error) {
+    console.error('❌ Error obteniendo usuario actual:', error);
     return 'anonymous';
   }
 };
@@ -58,17 +65,17 @@ const handleFirestoreError = (error, operation) => {
       console.info('💡 Para habilitar persistencia, configura Firestore siguiendo las instrucciones en FIREBASE_SETUP.md');
       permissionErrorsByUser.set(userId, true);
     }
-    return null;
+    return false; // Cambio: retornar false en lugar de null para operaciones fallidas
   }
   
   if (error.code === 'failed-precondition' && error.message.includes('index')) {
     console.info('🔍 Firebase está creando índices necesarios. Usando datos locales temporalmente.');
     console.info('🔗 Estado del índice: https://console.firebase.google.com/project/centralteleoperadores/firestore/indexes');
-    return null;
+    return false; // Cambio: retornar false en lugar de null
   }
   
-  console.error(`Error en ${operation}:`, error);
-  throw error;
+  console.error(`❌ Error en ${operation}:`, error);
+  throw error; // Lanzar el error para que sea capturado en el catch
 };
 
 // Servicio para Operadores
@@ -138,9 +145,12 @@ export const operatorService = {
   // Eliminar operador
   async delete(operatorId) {
     try {
+      console.log('🗑️ Eliminando operador de Firestore:', operatorId);
       await deleteDoc(doc(db, COLLECTIONS.OPERATORS, operatorId));
+      console.log('✅ Operador eliminado exitosamente de Firestore');
       return true;
     } catch (error) {
+      console.error('❌ Error eliminando operador de Firestore:', error);
       return handleFirestoreError(error, 'eliminar operador');
     }
   },
@@ -242,9 +252,18 @@ export const assignmentService = {
   // Eliminar asignaciones de un operador
   async deleteOperatorAssignments(userId, operatorId) {
     try {
-      await deleteDoc(doc(db, COLLECTIONS.ASSIGNMENTS, `${userId}_${operatorId}`));
+      console.log('🗑️ Eliminando asignaciones del operador:', { userId, operatorId });
+      const docId = `${userId}_${operatorId}`;
+      await deleteDoc(doc(db, COLLECTIONS.ASSIGNMENTS, docId));
+      console.log('✅ Asignaciones del operador eliminadas exitosamente');
       return true;
     } catch (error) {
+      // Si el documento no existe, no es un error crítico
+      if (error.code === 'not-found') {
+        console.log('ℹ️ No había asignaciones para este operador (documento no existe)');
+        return true;
+      }
+      console.error('❌ Error eliminando asignaciones del operador:', error);
       return handleFirestoreError(error, 'eliminar asignaciones');
     }
   },

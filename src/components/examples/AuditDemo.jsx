@@ -1,8 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useCallStore, useAppStore } from '../../stores';
 import { BarChart3, FileSpreadsheet, TrendingUp, Users, Clock, Phone, User, Download, FileText, Printer } from 'lucide-react';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
 
 function AuditDemo() {
   const {
@@ -302,7 +300,7 @@ function AuditDemo() {
     console.log(`  ${operator.operatorName}: ${operator.assignedBeneficiaries} asignaciones reales`);
   });
 
-  // Calcular métricas totales
+  // Calcular métricas totales con KPIs adicionales
   const totalMetrics = operatorCallMetrics.reduce((acc, operator) => {
     return {
       totalCalls: acc.totalCalls + operator.totalCalls,
@@ -310,6 +308,7 @@ function AuditDemo() {
       totalFailedCalls: acc.totalFailedCalls + operator.failedCalls,
       totalAssignedBeneficiaries: acc.totalAssignedBeneficiaries + operator.assignedBeneficiaries,
       totalContactedBeneficiaries: acc.totalContactedBeneficiaries + operator.contactedBeneficiaries,
+      totalUncontactedBeneficiaries: acc.totalUncontactedBeneficiaries + operator.uncontactedBeneficiaries,
       totalEffectiveMinutes: acc.totalEffectiveMinutes + operator.totalEffectiveMinutes
     };
   }, {
@@ -318,26 +317,86 @@ function AuditDemo() {
     totalFailedCalls: 0,
     totalAssignedBeneficiaries: 0,
     totalContactedBeneficiaries: 0,
+    totalUncontactedBeneficiaries: 0,
     totalEffectiveMinutes: 0
   });
 
+  // 📊 Calcular KPIs adicionales para el reporte
+  const globalSuccessRate = totalMetrics.totalCalls > 0 
+    ? Math.round((totalMetrics.totalSuccessfulCalls / totalMetrics.totalCalls) * 100) 
+    : 0;
+  
+  const averageMinutesPerSuccessfulCall = totalMetrics.totalSuccessfulCalls > 0
+    ? (totalMetrics.totalEffectiveMinutes / totalMetrics.totalSuccessfulCalls).toFixed(2)
+    : 0;
+  
+  const contactRate = totalMetrics.totalAssignedBeneficiaries > 0
+    ? Math.round((totalMetrics.totalContactedBeneficiaries / totalMetrics.totalAssignedBeneficiaries) * 100)
+    : 0;
+  
+  const averageCallsPerOperator = operatorCallMetrics.length > 0
+    ? Math.round(totalMetrics.totalCalls / operatorCallMetrics.length)
+    : 0;
+  
+  const averageCallsPerBeneficiary = totalMetrics.totalContactedBeneficiaries > 0
+    ? (totalMetrics.totalCalls / totalMetrics.totalContactedBeneficiaries).toFixed(2)
+    : 0;
+
   // Función para generar PDF
-  const generatePDFReport = () => {
+  const generatePDFReport = async () => {
     setIsGeneratingPDF(true);
     
     try {
+      // ✅ VALIDACIÓN: Verificar que hay datos antes de generar el PDF
+      if (!operatorCallMetrics || operatorCallMetrics.length === 0) {
+        alert('⚠️ No hay datos disponibles para generar el reporte PDF.');
+        console.warn('[AUDIT] No hay métricas de operadores disponibles');
+        setIsGeneratingPDF(false);
+        return;
+      }
+      
+      console.log('🔄 [AUDIT] Iniciando generación de PDF...');
+      console.log('📊 [AUDIT] Métricas de operadores:', operatorCallMetrics.length);
+      
+      // 🔥 IMPORTACIÓN DINÁMICA para optimizar el bundle
+      const jsPDF = (await import('jspdf')).default;
+      const autoTable = (await import('jspdf-autotable')).default;
+      
+      console.log('✅ [AUDIT] Librerías jsPDF cargadas correctamente');
+      console.log('✅ [AUDIT] autoTable disponible:', typeof autoTable);
+      
       const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.width;
+      const pageHeight = doc.internal.pageSize.height;
+      const margin = 20;
+      const usableWidth = pageWidth - (margin * 2);
       
-      // 📄 ENCABEZADO CORPORATIVO
-      doc.setFontSize(18);
+      // 🎨 PALETA DE COLORES PROFESIONAL
+      const colors = {
+        primary: [41, 98, 255],      // Azul corporativo
+        secondary: [100, 116, 139],  // Gris medio
+        success: [34, 197, 94],      // Verde
+        danger: [239, 68, 68],       // Rojo
+        dark: [30, 41, 59],          // Gris oscuro
+        light: [248, 250, 252]       // Gris muy claro
+      };
+      
+      // ═══════════════════════════════════════════════════════════
+      // 📄 ENCABEZADO CORPORATIVO PROFESIONAL
+      // ═══════════════════════════════════════════════════════════
+      doc.setFillColor(...colors.primary);
+      doc.rect(0, 0, pageWidth, 40, 'F');
+      
+      doc.setTextColor(255, 255, 255);
       doc.setFont('helvetica', 'bold');
-      doc.text('CENTRO DE TELEASISTENCIA', 20, 12);
+      doc.setFontSize(20);
+      doc.text('CENTRO DE TELEASISTENCIA', pageWidth / 2, 15, { align: 'center' });
       
-      doc.setFontSize(14);
+      doc.setFontSize(12);
       doc.setFont('helvetica', 'normal');
-      doc.text('REPORTE DE AUDITORÍA AVANZADA', 20, 22);
+      doc.text('REPORTE DE AUDITORÍA AVANZADA', pageWidth / 2, 25, { align: 'center' });
       
-      // Fecha y hora
+      // Información de generación
       const now = new Date();
       const dateStr = now.toLocaleDateString('es-CL', {
         weekday: 'long',
@@ -345,43 +404,178 @@ function AuditDemo() {
         month: 'long',
         day: 'numeric'
       });
-      const timeStr = now.toLocaleTimeString('es-CL');
+      const timeStr = now.toLocaleTimeString('es-CL', {
+        hour: '2-digit',
+        minute: '2-digit'
+      });
       
-      doc.setFontSize(10);
-      doc.text(`Generado el ${dateStr} a las ${timeStr}`, 20, 32);
-      doc.text(`Datos sincronizados con Dashboard Principal`, 20, 38);
+      doc.setFontSize(9);
+      doc.text(`Generado el ${dateStr} a las ${timeStr}`, pageWidth / 2, 33, { align: 'center' });
       
-      let yPosition = 50;
+      let yPos = 50;
       
-      // 📊 RESUMEN EJECUTIVO
-      doc.setFontSize(12);
+      // ═══════════════════════════════════════════════════════════
+      // 📊 RESUMEN EJECUTIVO - KPIs PRINCIPALES
+      // ═══════════════════════════════════════════════════════════
+      doc.setTextColor(...colors.dark);
       doc.setFont('helvetica', 'bold');
-      doc.text('RESUMEN EJECUTIVO', 20, yPosition);
-      yPosition += 10;
+      doc.setFontSize(14);
+      doc.text('RESUMEN EJECUTIVO', margin, yPos);
+      yPos += 10;
+      
+      // Línea separadora elegante
+      doc.setDrawColor(...colors.primary);
+      doc.setLineWidth(0.5);
+      doc.line(margin, yPos, pageWidth - margin, yPos);
+      yPos += 8;
       
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
-      doc.text(`• Total de Llamadas Realizadas: ${totalMetrics.totalCalls.toLocaleString()}`, 25, yPosition);
-      yPosition += 5;
-      doc.text(`• Llamadas Exitosas: ${totalMetrics.totalSuccessfulCalls.toLocaleString()} (${Math.round((totalMetrics.totalSuccessfulCalls / totalMetrics.totalCalls) * 100)}%)`, 25, yPosition);
-      yPosition += 5;
-      doc.text(`• Llamadas Fallidas: ${totalMetrics.totalFailedCalls.toLocaleString()} (${Math.round((totalMetrics.totalFailedCalls / totalMetrics.totalCalls) * 100)}%)`, 25, yPosition);
-      yPosition += 5;
-      doc.text(`• Beneficiarios Asignados: ${totalMetrics.totalAssignedBeneficiaries.toLocaleString()}`, 25, yPosition);
-      yPosition += 5;
-      doc.text(`• Beneficiarios Contactados: ${totalMetrics.totalContactedBeneficiaries.toLocaleString()}`, 25, yPosition);
-      yPosition += 5;
-      doc.text(`• Tiempo Total Efectivo: ${totalMetrics.totalEffectiveMinutes.toLocaleString()} minutos`, 25, yPosition);
-      yPosition += 15;
+      doc.setFontSize(10);
+      doc.setTextColor(...colors.secondary);
       
-      // 👥 TABLA DETALLADA POR TELEOPERADORA
-      doc.setFontSize(12);
+      // KPIs en formato tabla de 2 columnas para mejor legibilidad
+      const leftColumn = margin;
+      const rightColumn = pageWidth / 2 + 5;
+      const lineHeight = 7;
+      
+      // Columna Izquierda
       doc.setFont('helvetica', 'bold');
-      doc.text('MÉTRICAS DETALLADAS POR TELEOPERADORA', 20, yPosition);
-      yPosition += 10;
+      doc.text('Beneficiarios Asignados:', leftColumn, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.text(totalMetrics.totalAssignedBeneficiaries.toLocaleString(), leftColumn + 55, yPos);
       
-      // Crear tabla con autoTable
-      const tableData = operatorCallMetrics.map((operator, index) => [
+      // Columna Derecha
+      doc.setFont('helvetica', 'bold');
+      doc.text('Total de Llamadas:', rightColumn, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.text(totalMetrics.totalCalls.toLocaleString(), rightColumn + 45, yPos);
+      yPos += lineHeight;
+      
+      // Fila 2
+      doc.setFont('helvetica', 'bold');
+      doc.text('Beneficiarios Contactados:', leftColumn, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...colors.success);
+      doc.text(totalMetrics.totalContactedBeneficiaries.toLocaleString(), leftColumn + 55, yPos);
+      doc.setTextColor(...colors.secondary);
+      
+      doc.setFont('helvetica', 'bold');
+      doc.text('Beneficiarios Sin Contactar:', rightColumn, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...colors.danger);
+      doc.text(totalMetrics.totalUncontactedBeneficiaries.toLocaleString(), rightColumn + 60, yPos);
+      doc.setTextColor(...colors.secondary);
+      yPos += lineHeight;
+      
+      // Fila 3
+      doc.setFont('helvetica', 'bold');
+      doc.text('Llamadas Exitosas:', leftColumn, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...colors.success);
+      doc.text(`${totalMetrics.totalSuccessfulCalls.toLocaleString()} (${Math.round((totalMetrics.totalSuccessfulCalls / totalMetrics.totalCalls) * 100)}%)`, leftColumn + 55, yPos);
+      doc.setTextColor(...colors.secondary);
+      
+      doc.setFont('helvetica', 'bold');
+      doc.text('Llamadas Fallidas:', rightColumn, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...colors.danger);
+      doc.text(`${totalMetrics.totalFailedCalls.toLocaleString()} (${Math.round((totalMetrics.totalFailedCalls / totalMetrics.totalCalls) * 100)}%)`, rightColumn + 45, yPos);
+      doc.setTextColor(...colors.secondary);
+      yPos += lineHeight;
+      
+      // Fila 4
+      doc.setFont('helvetica', 'bold');
+      doc.text('Tasa de Éxito General:', leftColumn, yPos);
+      doc.setFont('helvetica', 'normal');
+      const successColor = globalSuccessRate >= 60 ? colors.success : colors.danger;
+      doc.setTextColor(...successColor);
+      doc.text(`${globalSuccessRate}%`, leftColumn + 55, yPos);
+      doc.setTextColor(...colors.secondary);
+      
+      doc.setFont('helvetica', 'bold');
+      doc.text('Minutos Totales Efectivos:', rightColumn, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`${totalMetrics.totalEffectiveMinutes.toLocaleString()} min (${(totalMetrics.totalEffectiveMinutes / 60).toFixed(1)} hrs)`, rightColumn + 60, yPos);
+      yPos += lineHeight;
+      
+      // Fila 5
+      doc.setFont('helvetica', 'bold');
+      doc.text('Promedio/Llamada Exitosa:', leftColumn, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`${averageMinutesPerSuccessfulCall} min`, leftColumn + 55, yPos);
+      yPos += 12;
+      
+      // ═══════════════════════════════════════════════════════════
+      // 📈 INDICADORES DE RENDIMIENTO
+      // ═══════════════════════════════════════════════════════════
+      doc.setTextColor(...colors.dark);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(14);
+      doc.text('INDICADORES DE RENDIMIENTO', margin, yPos);
+      yPos += 10;
+      
+      // Línea separadora
+      doc.setDrawColor(...colors.primary);
+      doc.line(margin, yPos, pageWidth - margin, yPos);
+      yPos += 8;
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.setTextColor(...colors.secondary);
+      
+      // KPIs adicionales en formato limpio
+      doc.setFont('helvetica', 'bold');
+      doc.text('Tasa de Contacto:', leftColumn, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`${contactRate}%`, leftColumn + 55, yPos);
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(8);
+      doc.text('(de beneficiarios asignados)', leftColumn + 70, yPos);
+      doc.setFontSize(10);
+      yPos += lineHeight;
+      
+      doc.setFont('helvetica', 'bold');
+      doc.text('Promedio Llamadas/Operadora:', leftColumn, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.text(averageCallsPerOperator.toLocaleString(), leftColumn + 65, yPos);
+      
+      doc.setFont('helvetica', 'bold');
+      doc.text('Llamadas/Beneficiario:', rightColumn, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.text(averageCallsPerBeneficiary, rightColumn + 50, yPos);
+      yPos += lineHeight;
+      
+      doc.setFont('helvetica', 'bold');
+      doc.text('Teleoperadoras Activas:', leftColumn, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.text(operatorCallMetrics.length.toString(), leftColumn + 55, yPos);
+      
+      doc.setFont('helvetica', 'bold');
+      doc.text('Productividad:', rightColumn, yPos);
+      doc.setFont('helvetica', 'normal');
+      const productivity = totalMetrics.totalEffectiveMinutes > 0 
+        ? (totalMetrics.totalCalls / (totalMetrics.totalEffectiveMinutes / 60)).toFixed(1) 
+        : '0';
+      doc.text(`${productivity} llamadas/hora`, rightColumn + 35, yPos);
+      yPos += 15;
+      
+      // ═══════════════════════════════════════════════════════════
+      // 👥 MÉTRICAS DETALLADAS POR TELEOPERADORA
+      // ═══════════════════════════════════════════════════════════
+      doc.setTextColor(...colors.dark);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(14);
+      doc.text('MÉTRICAS DETALLADAS POR TELEOPERADORA', margin, yPos);
+      yPos += 10;
+      
+      // Línea separadora
+      doc.setDrawColor(...colors.primary);
+      doc.line(margin, yPos, pageWidth - margin, yPos);
+      yPos += 5;
+      
+      // Preparar datos de la tabla
+      console.log('📊 [AUDIT] Preparando datos para tabla...');
+      const tableData = operatorCallMetrics.map((operator) => [
         operator.operatorName,
         operator.totalCalls.toString(),
         operator.assignedBeneficiaries.toString(),
@@ -395,72 +589,113 @@ function AuditDemo() {
         operator.averageCallsPerBeneficiary.toString()
       ]);
       
-      doc.autoTable({
-        startY: yPosition,
+      console.log('📋 [AUDIT] Filas de datos en tabla:', tableData.length);
+      
+      // Tabla profesional con autoTable
+      autoTable(doc, {
+        startY: yPos,
         head: [[
           'Teleoperadora',
-          'Total Llamadas',
+          'Total\nLlamadas',
           'Asignados',
           'Contactados',
-          'Sin Contactar',
+          'Sin\nContactar',
           'Exitosas',
           'Fallidas',
-          'Tasa Éxito',
-          'Min. Efectivos',
-          'Min/Llamada',
-          'Llamadas/Benef.'
+          'Tasa\nÉxito',
+          'Min.\nEfectivos',
+          'Min/\nLlamada',
+          'Llamadas/\nBenef.'
         ]],
         body: tableData,
-        theme: 'striped',
+        theme: 'grid',
         headStyles: {
-          fillColor: [41, 128, 185],
-          textColor: 255,
+          fillColor: colors.primary,
+          textColor: [255, 255, 255],
           fontSize: 8,
-          halign: 'center'
+          fontStyle: 'bold',
+          halign: 'center',
+          valign: 'middle',
+          lineWidth: 0.1,
+          lineColor: [255, 255, 255]
         },
         bodyStyles: {
-          fontSize: 7,
-          halign: 'center'
+          fontSize: 8,
+          halign: 'center',
+          valign: 'middle',
+          textColor: colors.dark,
+          lineWidth: 0.1,
+          lineColor: colors.secondary
         },
         alternateRowStyles: {
-          fillColor: [245, 245, 245]
+          fillColor: colors.light
         },
         columnStyles: {
-          0: { halign: 'left', cellWidth: 35 },
+          0: { halign: 'left', cellWidth: 35, fontStyle: 'bold' },
           1: { cellWidth: 15 },
           2: { cellWidth: 15 },
           3: { cellWidth: 15 },
           4: { cellWidth: 15 },
           5: { cellWidth: 15 },
           6: { cellWidth: 15 },
-          7: { cellWidth: 15 },
-          8: { cellWidth: 20 },
-          9: { cellWidth: 15 },
+          7: { cellWidth: 12 },
+          8: { cellWidth: 15 },
+          9: { cellWidth: 12 },
           10: { cellWidth: 15 }
-        }
+        },
+        margin: { left: margin, right: margin }
       });
       
-      // 📈 PIE DE PÁGINA
+      // ═══════════════════════════════════════════════════════════
+      // � PIE DE PÁGINA PROFESIONAL
+      // ═══════════════════════════════════════════════════════════
       const pageCount = doc.internal.getNumberOfPages();
+      console.log('📄 [AUDIT] Generando pie de página para', pageCount, 'páginas');
+      
       for (let i = 1; i <= pageCount; i++) {
         doc.setPage(i);
+        
+        // Línea superior del pie de página
+        doc.setDrawColor(...colors.secondary);
+        doc.setLineWidth(0.3);
+        doc.line(margin, pageHeight - 15, pageWidth - margin, pageHeight - 15);
+        
+        // Texto del pie de página
         doc.setFontSize(8);
-        doc.setFont('helvetica', 'italic');
-        doc.text(`Página ${i} de ${pageCount} - Reporte generado automáticamente`, 
-                 doc.internal.pageSize.width / 2, 
-                 doc.internal.pageSize.height - 10, 
-                 { align: 'center' });
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(...colors.secondary);
+        
+        // Izquierda: Confidencial
+        doc.text('Documento Confidencial', margin, pageHeight - 10);
+        
+        // Centro: Nombre de la empresa
+        doc.text('Centro de Teleasistencia', pageWidth / 2, pageHeight - 10, { align: 'center' });
+        
+        // Derecha: Número de página
+        doc.text(`Página ${i} de ${pageCount}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
       }
       
-      // Guardar PDF
+      // ═══════════════════════════════════════════════════════════
+      // 💾 GUARDAR PDF
+      // ═══════════════════════════════════════════════════════════
       const fileName = `auditoria_avanzada_${now.toISOString().split('T')[0]}.pdf`;
+      console.log('💾 [AUDIT] Guardando PDF como:', fileName);
       doc.save(fileName);
       
       console.log('✅ [AUDIT] PDF generado exitosamente:', fileName);
+      alert(`✅ PDF generado exitosamente: ${fileName}`);
       
     } catch (error) {
       console.error('❌ [AUDIT] Error generando PDF:', error);
-      alert('Error generando el reporte PDF. Revise la consola para más detalles.');
+      console.error('❌ [AUDIT] Detalles del error:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
+      
+      // Mensaje de error más detallado
+      const errorMsg = error.message || 'Error desconocido';
+      alert(`❌ Error al generar el PDF:\n\n${errorMsg}\n\nRevise la consola (F12) para más detalles.`);
     } finally {
       setIsGeneratingPDF(false);
     }

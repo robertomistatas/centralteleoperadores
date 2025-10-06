@@ -7,6 +7,7 @@ import {
   updateProfile
 } from 'firebase/auth';
 import { auth } from './firebase';
+import autoSyncService from './services/autoSyncService'; // ⭐ NUEVO
 
 // Crear contexto de autenticación
 const AuthContext = createContext();
@@ -71,7 +72,30 @@ export const AuthProvider = ({ children }) => {
 
   // Efecto para escuchar cambios en el estado de autenticación
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        console.log('👤 Usuario autenticado:', user.email);
+        
+        // ⭐ AUTO-SYNC: Verificar y sincronizar automáticamente UIDs sintéticos
+        try {
+          const wasSynced = await autoSyncService.checkAndSync(user);
+          
+          if (wasSynced) {
+            console.log('🔄 Usuario sincronizado automáticamente');
+            // Opcional: Mostrar notificación al usuario
+            window.dispatchEvent(new CustomEvent('showNotification', {
+              detail: {
+                type: 'success',
+                message: 'Tu perfil ha sido actualizado automáticamente'
+              }
+            }));
+          }
+        } catch (error) {
+          console.error('❌ Error en auto-sync:', error);
+          // No bloquear el login si falla el sync
+        }
+      }
+      
       setUser(user);
       setLoading(false);
     });

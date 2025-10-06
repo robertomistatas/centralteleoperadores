@@ -20,6 +20,13 @@ service cloud.firestore {
       allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
       
+      // 🔥 REGLA CRÍTICA: Super admin y dueño pueden ELIMINAR operadores
+      allow delete: if request.auth != null && (
+        isSuperAdmin() || 
+        isAdmin() ||
+        resource.data.userId == request.auth.uid
+      );
+      
       // 🔥 NUEVA REGLA: Teleoperadoras pueden leer todos los operadores para encontrar su registro
       allow read: if request.auth != null && (
         exists(/databases/$(database)/documents/userProfiles/$(request.auth.uid)) &&
@@ -34,6 +41,13 @@ service cloud.firestore {
     match /assignments/{document} {
       allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      
+      // 🔥 REGLA CRÍTICA: Super admin y dueño pueden ELIMINAR asignaciones
+      allow delete: if request.auth != null && (
+        isSuperAdmin() || 
+        isAdmin() ||
+        resource.data.userId == request.auth.uid
+      );
       
       // 🔥 NUEVA REGLA: Teleoperadoras pueden leer todas las asignaciones para encontrar las suyas
       allow read: if request.auth != null && (

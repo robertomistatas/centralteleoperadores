@@ -1,0 +1,24 @@
+[2025-10-06T17:52:29.931Z] INFO: 🔧 Iniciando script de migración de operadores a sistema UID
+
+[2025-10-06T17:52:29.935Z] INFO: Configuración:
+{
+  "dryRun": true,
+  "backupDir": "C:\\Users\\rober\\Seguimiento teleasistencia\\centralteleoperadores\\backups",
+  "logFile": "C:\\Users\\rober\\Seguimiento teleasistencia\\centralteleoperadores\\migration.log",
+  "collections": {
+    "operators": "operators",
+    "userProfiles": "userProfiles",
+    "assignments": "assignments"
+  },
+  "validation": {
+    "minEmailLength": 5,
+    "maxRetries": 3,
+    "batchSize": 10
+  }
+}
+
+[2025-10-06T17:52:29.938Z] CRITICAL: ❌ Error fatal en el script de migración
+{
+  "error": "Cannot find module './serviceAccountKey.json'\nRequire stack:\n- C:\\Users\\rober\\Seguimiento teleasistencia\\centralteleoperadores\\migrate-operators-to-uid.cjs",
+  "stack": "Error: Cannot find module './serviceAccountKey.json'\nRequire stack:\n- C:\\Users\\rober\\Seguimiento teleasistencia\\centralteleoperadores\\migrate-operators-to-uid.cjs\n    at Function._resolveFilename (node:internal/modules/cjs/loader:1401:15)\n    at defaultResolveImpl (node:internal/modules/cjs/loader:1057:19)\n    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1062:22)\n    at Function._load (node:internal/modules/cjs/loader:1211:37)\n    at TracingChannel.traceSync (node:diagnostics_channel:322:14)\n    at wrapModuleLoad (node:internal/modules/cjs/loader:235:24)\n    at Module.require (node:internal/modules/cjs/loader:1487:12)\n    at require (node:internal/modules/helpers:135:16)\n    at main (C:\\Users\\rober\\Seguimiento teleasistencia\\centralteleoperadores\\migrate-operators-to-uid.cjs:522:30)\n    at Object.<anonymous> (C:\\Users\\rober\\Seguimiento teleasistencia\\centralteleoperadores\\migrate-operators-to-uid.cjs:599:3)"
+}

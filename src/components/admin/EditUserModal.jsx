@@ -1,16 +1,31 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { X, User, Shield, Save, AlertCircle } from 'lucide-react';
+import { X, User, Shield, Save, AlertCircle, Mail, Phone } from 'lucide-react';
 
 const EditUserModal = ({ isOpen, user, roles, onSave, onClose, isLoading }) => {
   const [formData, setFormData] = useState({
     displayName: user?.displayName || '',
+    email: user?.email || '',
+    phone: user?.phone || '',
     role: user?.role || 'teleoperadora',
     isActive: user?.isActive !== false
   });
 
   const [errors, setErrors] = useState({});
   const modalRef = useRef(null);
+
+  // Actualizar formData cuando cambie el usuario
+  useEffect(() => {
+    if (user) {
+      setFormData({
+        displayName: user.displayName || '',
+        email: user.email || '',
+        phone: user.phone || '',
+        role: user.role || 'teleoperadora',
+        isActive: user.isActive !== false
+      });
+    }
+  }, [user]);
 
   // Si no está abierto o no hay usuario, no renderizar el modal
   if (!isOpen || !user) {
@@ -26,12 +41,25 @@ const EditUserModal = ({ isOpen, user, roles, onSave, onClose, isLoading }) => {
 
   const validateForm = () => {
     const newErrors = {};
+    
     if (!formData.displayName.trim()) {
       newErrors.displayName = 'El nombre es requerido';
     }
+    
+    if (!formData.email.trim()) {
+      newErrors.email = 'El email es requerido';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+      newErrors.email = 'Email inválido';
+    }
+    
+    if (formData.phone && !/^\+?[\d\s()-]{8,}$/.test(formData.phone)) {
+      newErrors.phone = 'Teléfono inválido (min. 8 dígitos)';
+    }
+    
     if (!formData.role) {
       newErrors.role = 'Selecciona un rol';
     }
+    
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -73,21 +101,34 @@ const EditUserModal = ({ isOpen, user, roles, onSave, onClose, isLoading }) => {
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* Email */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Email
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+              <Mail className="w-4 h-4" />
+              Email *
             </label>
             <input
               type="email"
-              value={user?.email || ''}
-              disabled
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-500"
+              value={formData.email}
+              onChange={(e) => handleChange('email', e.target.value)}
+              className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 ${
+                errors.email ? 'border-red-300' : 'border-gray-300 dark:border-gray-600'
+              } bg-white dark:bg-gray-700 text-gray-900 dark:text-white`}
+              placeholder="correo@ejemplo.com"
             />
-            <p className="text-xs text-gray-500 mt-1">El email no se puede modificar</p>
+            {errors.email && (
+              <p className="text-red-500 text-sm mt-1">{errors.email}</p>
+            )}
+            <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+              <AlertCircle className="w-3 h-3" />
+              Cambiar el email actualizará Firebase Authentication
+            </p>
           </div>
 
+          {/* Nombre */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+              <User className="w-4 h-4" />
               Nombre Completo *
             </label>
             <input
@@ -97,14 +138,38 @@ const EditUserModal = ({ isOpen, user, roles, onSave, onClose, isLoading }) => {
               className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 ${
                 errors.displayName ? 'border-red-300' : 'border-gray-300 dark:border-gray-600'
               } bg-white dark:bg-gray-700 text-gray-900 dark:text-white`}
+              placeholder="Juan Pérez"
             />
             {errors.displayName && (
               <p className="text-red-500 text-sm mt-1">{errors.displayName}</p>
             )}
           </div>
 
+          {/* Teléfono */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+              <Phone className="w-4 h-4" />
+              Teléfono
+            </label>
+            <input
+              type="tel"
+              value={formData.phone}
+              onChange={(e) => handleChange('phone', e.target.value)}
+              className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 ${
+                errors.phone ? 'border-red-300' : 'border-gray-300 dark:border-gray-600'
+              } bg-white dark:bg-gray-700 text-gray-900 dark:text-white`}
+              placeholder="+56912345678"
+            />
+            {errors.phone && (
+              <p className="text-red-500 text-sm mt-1">{errors.phone}</p>
+            )}
+            <p className="text-xs text-gray-500 mt-1">Formato: +56912345678 (opcional)</p>
+          </div>
+
+          {/* Rol */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+              <Shield className="w-4 h-4" />
               Rol *
             </label>
             <select
@@ -124,8 +189,12 @@ const EditUserModal = ({ isOpen, user, roles, onSave, onClose, isLoading }) => {
             {errors.role && (
               <p className="text-red-500 text-sm mt-1">{errors.role}</p>
             )}
+            {user?.role === 'super_admin' && (
+              <p className="text-xs text-gray-500 mt-1">El rol de Super Admin no se puede cambiar</p>
+            )}
           </div>
 
+          {/* Estado activo */}
           <div>
             <label className="flex items-center gap-2">
               <input
@@ -137,6 +206,9 @@ const EditUserModal = ({ isOpen, user, roles, onSave, onClose, isLoading }) => {
               />
               <span className="text-sm text-gray-700 dark:text-gray-300">Usuario activo</span>
             </label>
+            {user?.role === 'super_admin' && (
+              <p className="text-xs text-gray-500 mt-1 ml-6">Los Super Admins siempre están activos</p>
+            )}
           </div>
 
           {errors.submit && (

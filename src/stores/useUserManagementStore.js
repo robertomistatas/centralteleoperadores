@@ -97,19 +97,47 @@ const useUserManagementStore = create(
 
       updateUser: async (userId, updateData) => {
         try {
-          const updatedUser = await userManagementService.updateUser(userId, updateData);
+          // 🔍 Obtener el usuario actual para guardar su email anterior
+          const currentUser = get().users.find(u => u.id === userId);
+          const oldEmail = currentUser?.email;
+          
+          console.log('🔄 Store: Actualizando usuario', { userId, oldEmail, newEmail: updateData.email });
+          
+          // Usar el método completo que actualiza todo el sistema
+          const result = await userManagementService.updateUserComplete(userId, updateData, oldEmail);
+          
+          console.log('✅ Store: Resultado de actualización:', result);
+          
+          // Actualizar el usuario en el estado local
           set(state => {
             const updatedUsers = state.users.map(user => 
-              user.id === userId ? { ...user, ...updatedUser } : user
+              user.id === userId ? { ...user, ...updateData } : user
             );
             return {
               users: updatedUsers,
               stats: get().calculateStats(updatedUsers)
             };
           });
-          return updatedUser;
+          
+          // 🔥 IMPORTANTE: Forzar recarga de módulos que dependen de los datos de usuario
+          console.log('🔄 Store: Notificando cambios a otros módulos...');
+          
+          // Disparar evento personalizado para que otros módulos se actualicen
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('userDataUpdated', {
+              detail: {
+                userId,
+                oldEmail,
+                newEmail: updateData.email,
+                updateData,
+                result
+              }
+            }));
+          }
+          
+          return { ...updateData, ...result };
         } catch (error) {
-          console.error('Error actualizando usuario:', error);
+          console.error('❌ Store: Error actualizando usuario:', error);
           throw error;
         }
       },

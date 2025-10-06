@@ -212,6 +212,12 @@ const useAppStore = create(
         }
       },
 
+      // 🔥 NUEVA: Forzar recarga de operadores (para sincronización)
+      reloadOperators: async () => {
+        console.log('🔄 Forzando recarga de operadores...');
+        return get().loadOperators();
+      },
+
       loadAssignments: async () => {
         try {
           set({ isLoading: true });

@@ -16,6 +16,8 @@ import TeleoperadoraCalendar from './components/seguimientos/TeleoperadoraCalend
 import GestionesModule from './components/gestiones/GestionesModule';
 import SuperAdminDashboard from './components/admin/SuperAdminDashboard';
 import usePermissions from './hooks/usePermissions';
+import { useUserSync } from './hooks/useUserSync';
+import { syncKarolAutomatically } from './services/syncKarol'; // ⭐ NUEVO
 
 const TeleasistenciaApp = () => {
   const { user, logout } = useAuth();
@@ -174,6 +176,40 @@ const TeleasistenciaApp = () => {
   const loadingRef = useRef(false);
   const [dataLoaded, setDataLoaded] = useState(false);
 
+  // ⭐ AUTO-SYNC: Ejecutar sincronización automática de Karol al cargar
+  useEffect(() => {
+    if (user && userProfile && dataLoaded) {
+      const runAutoSync = async () => {
+        try {
+          const result = await syncKarolAutomatically();
+          
+          if (result.success && !result.alreadySynced) {
+            console.log('🎉 Karol sincronizada automáticamente');
+            showSuccess('Perfil de Karol Aguayo actualizado automáticamente');
+            
+            // Recargar datos para reflejar cambios
+            setTimeout(() => {
+              setDataLoaded(false);
+              loadUserData();
+            }, 1000);
+          } else if (result.alreadySynced) {
+            console.log('✅ Karol ya está sincronizada');
+          }
+        } catch (error) {
+          console.error('❌ Error en auto-sync:', error);
+          // No mostrar error al usuario para no ser intrusivo
+        }
+      };
+      
+      // Ejecutar solo una vez por sesión
+      const syncExecuted = sessionStorage.getItem('karol_auto_sync_executed');
+      if (!syncExecuted) {
+        runAutoSync();
+        sessionStorage.setItem('karol_auto_sync_executed', 'true');
+      }
+    }
+  }, [user, userProfile, dataLoaded]);
+
   useEffect(() => {
     if (user && userProfile && !dataLoaded && !loadingRef.current) {
       console.log('🚀 Triggering loadUserData:', {
@@ -247,6 +283,79 @@ const TeleasistenciaApp = () => {
       }
     }
   }, [dataLoaded, operators.length, Object.keys(operatorAssignments).length]);
+
+  // 🔥 NUEVO: Listener para actualizaciones de usuarios desde Configuración
+  useEffect(() => {
+    const handleUserDataUpdated = async (event) => {
+      const { userId, oldEmail, newEmail, updateData, result } = event.detail;
+      
+      console.log('🔔 Evento userDataUpdated recibido:', {
+        userId,
+        oldEmail,
+        newEmail,
+        operatorsUpdated: result.operatorsUpdated,
+        assignmentsUpdated: result.assignmentsUpdated
+      });
+      
+      // Recargar operadores y asignaciones desde Firebase
+      const { reloadOperators, loadAssignments } = useAppStore.getState();
+      
+      try {
+        console.log('🔄 Recargando operadores y asignaciones...');
+        const [updatedOperators, updatedAssignments] = await Promise.all([
+          reloadOperators(),
+          loadAssignments()
+        ]);
+        
+        // Actualizar estados locales
+        if (updatedOperators) {
+          setOperators(updatedOperators);
+          setZustandOperators(updatedOperators);
+        }
+        
+        if (updatedAssignments) {
+          // Las asignaciones vienen agrupadas por operador
+          const { operatorAssignments: grouped } = useAppStore.getState();
+          setOperatorAssignments(grouped);
+          setZustandOperatorAssignments(grouped);
+        }
+        
+        console.log('✅ Operadores y asignaciones recargados correctamente');
+        showSuccess(`Usuario actualizado: ${updateData.displayName || newEmail}`);
+      } catch (error) {
+        console.error('❌ Error recargando datos después de actualización:', error);
+        showError('Error al actualizar datos del módulo de Asignaciones');
+      }
+    };
+    
+    // Listener para userProfileUpdated de userSyncService
+    const handleUserProfileUpdated = async (event) => {
+      const updatedProfile = event.detail;
+      console.log('🔔 Evento userProfileUpdated recibido en App.jsx:', updatedProfile);
+      
+      // Recargar operadores para reflejar cambios
+      try {
+        const { reloadOperators } = useAppStore.getState();
+        const updatedOperators = await reloadOperators();
+        
+        if (updatedOperators) {
+          setOperators(updatedOperators);
+          setZustandOperators(updatedOperators);
+          console.log('✅ Operadores actualizados después de cambio de perfil');
+        }
+      } catch (error) {
+        console.error('❌ Error recargando operadores después de actualización de perfil:', error);
+      }
+    };
+    
+    window.addEventListener('userDataUpdated', handleUserDataUpdated);
+    window.addEventListener('userProfileUpdated', handleUserProfileUpdated);
+    
+    return () => {
+      window.removeEventListener('userDataUpdated', handleUserDataUpdated);
+      window.removeEventListener('userProfileUpdated', handleUserProfileUpdated);
+    };
+  }, [showSuccess, showError]);
 
   // ✅ ACTUALIZAR TAB POR DEFECTO SEGÚN PERMISOS
   useEffect(() => {
@@ -647,18 +756,35 @@ const TeleasistenciaApp = () => {
     try {
       console.log('🗑️ Iniciando eliminación de operadora:', operatorId);
       
-      // 1. Intentar eliminar en Firebase (si es posible)
-      try {
-        await operatorService.delete(operatorId);
-        await assignmentService.deleteOperatorAssignments(user.uid, operatorId);
-        console.log('✅ Eliminación exitosa en Firebase');
-      } catch (firebaseError) {
-        console.warn('⚠️ Error en Firebase (continuando con eliminación local):', firebaseError.message);
-        // Continuar con eliminación local incluso si Firebase falla
+      // 1. CRÍTICO: Eliminar primero en Firebase (esto debe ser exitoso)
+      console.log('🔥 Eliminando de Firebase...');
+      const deleteResult = await operatorService.delete(operatorId);
+      
+      if (!deleteResult || deleteResult === false) {
+        throw new Error('La eliminación en Firebase falló');
       }
       
-      // 2. Eliminar del estado local (SIEMPRE ejecutar esto)
-      console.log('🔄 Eliminando del estado local...');
+      console.log('✅ Operadora eliminada de Firebase correctamente');
+      
+      // 2. Eliminar asignaciones del operador en Firebase
+      try {
+        await assignmentService.deleteOperatorAssignments(user.uid, operatorId);
+        console.log('✅ Asignaciones eliminadas de Firebase');
+      } catch (assignError) {
+        console.warn('⚠️ Error eliminando asignaciones (puede no existir documento):', assignError.message);
+        // No es crítico si no hay asignaciones
+      }
+      
+      // 3. Actualizar PRIMERO el Zustand store (para sincronización global)
+      console.log('🔄 Actualizando Zustand store...');
+      const { removeOperator } = useAppStore.getState();
+      if (removeOperator) {
+        removeOperator(operatorId);
+        console.log('✅ Operadora eliminada del Zustand store');
+      }
+      
+      // 4. Actualizar estados locales de React (para UI inmediata)
+      console.log('🔄 Actualizando estados locales...');
       
       // Eliminar de operators
       const updatedOperators = operators.filter(op => op.id !== operatorId);
@@ -673,28 +799,22 @@ const TeleasistenciaApp = () => {
       const filteredAssignments = assignments.filter(a => !a.id.toString().startsWith(`${operatorId}-`));
       setAssignments(filteredAssignments);
       
-      // 3. Actualizar Zustand stores
-      try {
-        const { removeOperator } = useAppStore.getState();
-        if (removeOperator) {
-          removeOperator(operatorId);
-          console.log('✅ Eliminado del Zustand store');
-        }
-      } catch (zustandError) {
-        logger.warn('Error actualizando Zustand store:', zustandError.message);
-      }
+      console.log('✅ Estados locales actualizados');
       
-      logger.info('Operadora eliminada exitosamente');
-      showSuccess('Operadora eliminada exitosamente');
+      logger.info('Operadora eliminada exitosamente de Firebase y estados locales');
+      showSuccess('✅ Teleoperadora eliminada exitosamente');
       
     } catch (error) {
-      logger.error('Error eliminando operadora:', error);
-      showError('Error al eliminar la operadora. Por favor, inténtelo nuevamente o contacte al administrador.');
+      logger.error('❌ Error crítico eliminando operadora:', error);
+      showError(`❌ Error al eliminar la teleoperadora: ${error.message}. Por favor, verifique su conexión e inténtelo nuevamente.`);
+      
+      // NO actualizar estados locales si Firebase falló
+      console.error('❌ La eliminación no se completó. Los datos permanecen en Firebase.');
     }
   };
 
   // 🧹 FUNCIÓN DE LIMPIEZA MASIVA PARA TELEOPERADORAS FICTICIAS
-  const handleBulkCleanupOperators = () => {
+  const handleBulkCleanupOperators = async () => {
     const fictitiousNames = [
       'javiera reyes alvarado',
       'javiera valdivia', 
@@ -713,7 +833,7 @@ const TeleasistenciaApp = () => {
     );
 
     if (operatorsToDelete.length === 0) {
-      showInfo('No se encontraron operadoras ficticias para eliminar.');
+      showInfo('✅ No se encontraron teleoperadoras ficticias para eliminar.');
       return;
     }
 
@@ -726,17 +846,63 @@ const TeleasistenciaApp = () => {
     }
 
     console.log('🧹 Iniciando limpieza masiva de teleoperadoras ficticias...');
+    showInfo(`🔄 Eliminando ${operatorsToDelete.length} teleoperadoras ficticias...`);
     
-    operatorsToDelete.forEach(async (operator) => {
+    let successCount = 0;
+    let errorCount = 0;
+    
+    // Eliminar secuencialmente para evitar conflictos
+    for (const operator of operatorsToDelete) {
       try {
-        await handleDeleteOperator(operator.id);
-        logger.info(`Eliminada: ${operator.name}`);
+        console.log(`🗑️ Eliminando: ${operator.name}`);
+        
+        // Eliminar de Firebase
+        const deleteResult = await operatorService.delete(operator.id);
+        
+        if (deleteResult) {
+          // Eliminar asignaciones
+          try {
+            await assignmentService.deleteOperatorAssignments(user.uid, operator.id);
+          } catch (assignError) {
+            console.warn(`⚠️ No se pudieron eliminar asignaciones de ${operator.name}`);
+          }
+          
+          // Actualizar Zustand store
+          const { removeOperator } = useAppStore.getState();
+          if (removeOperator) {
+            removeOperator(operator.id);
+          }
+          
+          // Actualizar estados locales
+          setOperators(prev => prev.filter(op => op.id !== operator.id));
+          setOperatorAssignments(prev => {
+            const newAssignments = { ...prev };
+            delete newAssignments[operator.id];
+            return newAssignments;
+          });
+          
+          successCount++;
+          logger.info(`✅ Eliminada: ${operator.name}`);
+        } else {
+          throw new Error('Eliminación en Firebase falló');
+        }
       } catch (error) {
-        logger.error(`Error eliminando ${operator.name}:`, error);
+        errorCount++;
+        logger.error(`❌ Error eliminando ${operator.name}:`, error);
       }
-    });
+      
+      // Pequeña pausa entre eliminaciones
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
 
-    showInfo(`Proceso de limpieza iniciado para ${operatorsToDelete.length} operadoras ficticias.`);
+    // Mensaje final
+    if (errorCount === 0) {
+      showSuccess(`✅ ${successCount} teleoperadoras ficticias eliminadas exitosamente`);
+    } else {
+      showInfo(`⚠️ Proceso completado: ${successCount} exitosas, ${errorCount} con errores`);
+    }
+    
+    console.log('🧹 Limpieza masiva completada:', { successCount, errorCount });
   };
 
   const handleFileUploadForOperator = (event, operatorId) => {
@@ -2312,6 +2478,228 @@ const TeleasistenciaApp = () => {
     </div>
   );
 
+  // 🔄 Componente auxiliar para renderizar operadores con sincronización ROBUSTA
+  const OperatorCard = ({ operator }) => {
+    // Estado local para el perfil sincronizado
+    const [syncedProfile, setSyncedProfile] = React.useState(null);
+    const [profileLoading, setProfileLoading] = React.useState(false);
+    const [lastSync, setLastSync] = React.useState(null);
+    
+    // Función para cargar perfil (reutilizable)
+    const loadProfile = React.useCallback(async (forceReload = false) => {
+      if (!operator) return;
+      
+      // Si ya tenemos un perfil reciente y no es forzado, no recargar
+      if (syncedProfile && lastSync && !forceReload) {
+        const timeSinceSync = Date.now() - lastSync;
+        if (timeSinceSync < 3000) { // 3 segundos
+          console.log('⏭️ Perfil reciente, saltando recarga');
+          return;
+        }
+      }
+      
+      setProfileLoading(true);
+      
+      try {
+        let profile = null;
+        const userSyncService = (await import('./services/userSyncService')).default;
+        
+        // Intento 1: Buscar por UID
+        if (operator.uid) {
+          profile = await userSyncService.getUserProfile(operator.uid);
+          console.log('🔍 Búsqueda por UID:', operator.uid, profile ? '✅' : '❌');
+        }
+        
+        // Intento 2: Si no tiene UID o no se encontró, buscar por email
+        if (!profile && operator.email) {
+          profile = await userSyncService.getUserProfileByEmail(operator.email);
+          console.log('🔍 Búsqueda por email:', operator.email, profile ? '✅' : '❌');
+        }
+        
+        if (profile) {
+          console.log('✅ Perfil sincronizado:', profile.email);
+          setSyncedProfile(profile);
+          setLastSync(Date.now());
+        }
+      } catch (error) {
+        console.error('❌ Error cargando perfil:', error);
+      } finally {
+        setProfileLoading(false);
+      }
+    }, [operator, syncedProfile, lastSync]);
+    
+    // Cargar perfil al montar o cuando cambie el operador
+    React.useEffect(() => {
+      loadProfile();
+    }, [operator?.id]);
+    
+    // Escuchar actualizaciones globales
+    React.useEffect(() => {
+      const handleProfileUpdate = async (event) => {
+        const updatedProfile = event.detail;
+        console.log('🔔 Evento userProfileUpdated recibido:', {
+          newEmail: updatedProfile.email,
+          oldEmail: updatedProfile.oldEmail,
+          uid: updatedProfile.uid
+        });
+        console.log('📋 Comparando con operator:', {
+          operatorEmail: operator.email,
+          operatorUID: operator.uid,
+          operatorName: operator.name
+        });
+        
+        // Estrategia 1: Comparar por UID (más confiable)
+        const matchesUID = operator.uid && updatedProfile.uid === operator.uid;
+        
+        // Estrategia 2: Comparar por email NUEVO
+        const matchesNewEmail = operator.email && 
+          updatedProfile.email?.toLowerCase() === operator.email.toLowerCase();
+        
+        // Estrategia 3: Comparar por email VIEJO
+        const matchesOldEmail = operator.email && updatedProfile.oldEmail &&
+          updatedProfile.oldEmail.toLowerCase() === operator.email.toLowerCase();
+        
+        if (matchesUID || matchesNewEmail || matchesOldEmail) {
+          console.log('✅ Perfil actualizado para:', operator.name || operator.email);
+          if (matchesOldEmail) {
+            console.log('📧 Email cambió de', updatedProfile.oldEmail, 'a', updatedProfile.email);
+          }
+          setSyncedProfile(updatedProfile);
+          setLastSync(Date.now());
+        } else {
+          console.log('⏭️ Perfil no coincide con este operador, ignorando');
+        }
+      };
+      
+      window.addEventListener('userProfileUpdated', handleProfileUpdate);
+      
+      return () => {
+        window.removeEventListener('userProfileUpdated', handleProfileUpdate);
+      };
+    }, [operator?.id, operator?.uid, operator?.email]);
+    
+    // Priorizar perfil sincronizado
+    const displayEmail = syncedProfile?.email || operator.email;
+    const displayName = syncedProfile?.displayName || operator.name || 'Operador sin nombre';
+    const emailChanged = syncedProfile?.email && 
+      operator.email && 
+      syncedProfile.email.toLowerCase() !== operator.email.toLowerCase();
+    
+    return (
+      <div key={operator.id} className="bg-white rounded-lg shadow-md p-6">
+        <div className="flex justify-between items-start mb-4">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-2">
+              <h4 className="text-lg font-semibold text-gray-900">{displayName}</h4>
+              {operatorAssignments[operator.id] && (
+                <span className="bg-green-100 text-green-800 text-xs font-medium px-2 py-1 rounded-full">
+                  {operatorAssignments[operator.id].length} beneficiarios
+                </span>
+              )}
+              {profileLoading && (
+                <span className="text-xs text-gray-500 animate-pulse">Actualizando...</span>
+              )}
+              {syncedProfile && !profileLoading && (
+                <span className="text-xs text-green-600">✓ Sincronizado</span>
+              )}
+            </div>
+            <div className="text-sm text-gray-600 space-y-1">
+              {displayEmail && <p>📧 {displayEmail}</p>}
+              {operator.phone && <p>📞 {operator.phone}</p>}
+              {syncedProfile && operator.email !== syncedProfile.email && (
+                <p className="text-xs text-orange-600">⚠️ Email actualizado de: {operator.email}</p>
+              )}
+            </div>
+          </div>
+          
+          <div className="flex gap-2">
+            <label className="cursor-pointer bg-blue-500 text-white px-3 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2 text-sm">
+              <Upload className="w-4 h-4" />
+              Subir Excel
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={(e) => handleFileUploadForOperator(e, operator.id)}
+                className="hidden"
+              />
+            </label>
+            
+            {operatorAssignments[operator.id] && (
+              <button
+                onClick={() => clearOperatorAssignments(operator.id)}
+                className="bg-yellow-500 text-white px-3 py-2 rounded-lg hover:bg-yellow-600 transition-colors flex items-center gap-2 text-sm"
+              >
+                <Trash2 className="w-4 h-4" />
+                Limpiar
+              </button>
+            )}
+            
+            <button
+              onClick={() => handleDeleteOperator(operator.id)}
+              className="bg-red-500 text-white px-3 py-2 rounded-lg hover:bg-red-600 transition-colors flex items-center gap-2 text-sm"
+            >
+              <Trash2 className="w-4 h-4" />
+              Eliminar
+            </button>
+          </div>
+        </div>
+
+        {/* Formato de Excel esperado */}
+        <div className="bg-gray-50 rounded-lg p-4 mb-4">
+          <h5 className="text-sm font-medium text-gray-700 mb-2">Formato Excel esperado:</h5>
+          <div className="text-xs text-gray-600 space-y-1">
+            <p><strong>Columna A:</strong> Nombre del beneficiario</p>
+            <p><strong>Columna B:</strong> Teléfono(s) - separados por |, - o espacios (9 dígitos cada uno)</p>
+            <p><strong>Columna C:</strong> Comuna</p>
+          </div>
+        </div>
+
+        {/* Mostrar asignaciones si existen */}
+        {operatorAssignments[operator.id] && operatorAssignments[operator.id].length > 0 && (
+          <div className="border-t pt-4">
+            <h5 className="text-sm font-medium text-gray-700 mb-3">
+              Beneficiarios Asignados ({operatorAssignments[operator.id].length})
+            </h5>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Beneficiario</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Teléfono Principal</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Otros Teléfonos</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Comuna</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {operatorAssignments[operator.id].slice(0, 5).map((assignment) => (
+                    <tr key={assignment.id} className="border-b">
+                      <td className="px-3 py-2 text-gray-900">{assignment.beneficiary}</td>
+                      <td className="px-3 py-2 text-gray-900">{assignment.primaryPhone}</td>
+                      <td className="px-3 py-2 text-gray-600">
+                        {assignment.phones.length > 1 ? 
+                          assignment.phones.slice(1).join(', ') : 
+                          '-'
+                        }
+                      </td>
+                      <td className="px-3 py-2 text-gray-900">{assignment.commune}</td>
+                    </tr>
+                  ))}
+                  {operatorAssignments[operator.id].length > 5 && (
+                    <tr>
+                      <td colSpan="4" className="px-3 py-2 text-center text-gray-500 text-sm">
+                        ... y {operatorAssignments[operator.id].length - 5} beneficiarios más
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const Assignments = () => (
     <div className="space-y-6">
       {/* Header con botón para crear operador */}
@@ -2567,111 +2955,10 @@ const TeleasistenciaApp = () => {
         </div>
       )}
 
-      {/* Lista de operadores */}
+      {/* Lista de operadores con sincronización */}
       <div className="space-y-4">
         {operators.filter(operator => operator && operator.id).map((operator) => (
-          <div key={operator.id} className="bg-white rounded-lg shadow-md p-6">
-            <div className="flex justify-between items-start mb-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-3 mb-2">
-                  <h4 className="text-lg font-semibold text-gray-900">{operator.name || 'Operador sin nombre'}</h4>
-                  {operatorAssignments[operator.id] && (
-                    <span className="bg-green-100 text-green-800 text-xs font-medium px-2 py-1 rounded-full">
-                      {operatorAssignments[operator.id].length} beneficiarios
-                    </span>
-                  )}
-                </div>
-                <div className="text-sm text-gray-600 space-y-1">
-                  {operator.email && <p>📧 {operator.email}</p>}
-                  {operator.phone && <p>📞 {operator.phone}</p>}
-                </div>
-              </div>
-              
-              <div className="flex gap-2">
-                <label className="cursor-pointer bg-blue-500 text-white px-3 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2 text-sm">
-                  <Upload className="w-4 h-4" />
-                  Subir Excel
-                  <input
-                    type="file"
-                    accept=".xlsx,.xls"
-                    onChange={(e) => handleFileUploadForOperator(e, operator.id)}
-                    className="hidden"
-                  />
-                </label>
-                
-                {operatorAssignments[operator.id] && (
-                  <button
-                    onClick={() => clearOperatorAssignments(operator.id)}
-                    className="bg-yellow-500 text-white px-3 py-2 rounded-lg hover:bg-yellow-600 transition-colors flex items-center gap-2 text-sm"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    Limpiar
-                  </button>
-                )}
-                
-                <button
-                  onClick={() => handleDeleteOperator(operator.id)}
-                  className="bg-red-500 text-white px-3 py-2 rounded-lg hover:bg-red-600 transition-colors flex items-center gap-2 text-sm"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Eliminar
-                </button>
-              </div>
-            </div>
-
-            {/* Formato de Excel esperado */}
-            <div className="bg-gray-50 rounded-lg p-4 mb-4">
-              <h5 className="text-sm font-medium text-gray-700 mb-2">Formato Excel esperado:</h5>
-              <div className="text-xs text-gray-600 space-y-1">
-                <p><strong>Columna A:</strong> Nombre del beneficiario</p>
-                <p><strong>Columna B:</strong> Teléfono(s) - separados por |, - o espacios (9 dígitos cada uno)</p>
-                <p><strong>Columna C:</strong> Comuna</p>
-              </div>
-            </div>
-
-            {/* Mostrar asignaciones si existen */}
-            {operatorAssignments[operator.id] && operatorAssignments[operator.id].length > 0 && (
-              <div className="border-t pt-4">
-                <h5 className="text-sm font-medium text-gray-700 mb-3">
-                  Beneficiarios Asignados ({operatorAssignments[operator.id].length})
-                </h5>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-gray-50">
-                        <th className="px-3 py-2 text-left font-medium text-gray-700">Beneficiario</th>
-                        <th className="px-3 py-2 text-left font-medium text-gray-700">Teléfono Principal</th>
-                        <th className="px-3 py-2 text-left font-medium text-gray-700">Otros Teléfonos</th>
-                        <th className="px-3 py-2 text-left font-medium text-gray-700">Comuna</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {operatorAssignments[operator.id].slice(0, 5).map((assignment) => (
-                        <tr key={assignment.id} className="border-b">
-                          <td className="px-3 py-2 text-gray-900">{assignment.beneficiary}</td>
-                          <td className="px-3 py-2 text-gray-900">{assignment.primaryPhone}</td>
-                          <td className="px-3 py-2 text-gray-600">
-                            {assignment.phones.length > 1 ? 
-                              assignment.phones.slice(1).join(', ') : 
-                              '-'
-                            }
-                          </td>
-                          <td className="px-3 py-2 text-gray-900">{assignment.commune}</td>
-                        </tr>
-                      ))}
-                      {operatorAssignments[operator.id].length > 5 && (
-                        <tr>
-                          <td colSpan="4" className="px-3 py-2 text-center text-gray-500 text-sm">
-                            ... y {operatorAssignments[operator.id].length - 5} beneficiarios más
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
+          <OperatorCard key={operator.id} operator={operator} />
         ))}
 
         {operators.length === 0 && (

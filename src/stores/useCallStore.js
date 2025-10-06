@@ -370,6 +370,8 @@ const useCallStore = create(
               totalCalls: metrics.totalCalls,
               successfulCalls: metrics.successfulCalls,
               failedCalls: metrics.failedCalls,
+              totalDuration: metrics.totalDuration, // ✅ AGREGADO: Duración total en segundos
+              totalEffectiveMinutes: Math.round(metrics.totalDuration / 60), // ✅ AGREGADO: Minutos totales
               averageDuration: metrics.totalCalls > 0 ? 
                 Math.round(metrics.totalDuration / metrics.totalCalls) : 0,
               successRate: metrics.totalCalls > 0 ? 

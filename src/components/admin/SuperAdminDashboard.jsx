@@ -29,6 +29,7 @@ import {
 import { useAuth } from '../../AuthContext';
 import useUserManagementStore from '../../stores/useUserManagementStore';
 import { userManagementService } from '../../services/userManagementService';
+import { userSyncService } from '../../services/userSyncService'; // ✅ Servicio de sincronización global
 import { useUIStore } from '../../stores';
 import logger from '../../utils/logger';
 import CreateUserModal from './CreateUserModal';
@@ -159,10 +160,39 @@ const SuperAdminDashboard = () => {
   const handleEditUser = async (userData) => {
     setActionLoading(true);
     try {
+      console.log('🔄 Actualizando usuario:', {
+        uid: selectedUser.uid,
+        email: selectedUser.email,
+        userData
+      });
+      
+      // Verificar si el usuario tiene UID
+      if (!selectedUser.uid) {
+        console.warn('⚠️ Usuario sin UID, buscando por email:', selectedUser.email);
+        
+        // Buscar el perfil por email para obtener el UID
+        const profile = await userSyncService.getUserProfileByEmail(selectedUser.email);
+        
+        if (profile && profile.uid) {
+          console.log('✅ UID encontrado por email:', profile.uid);
+          selectedUser.uid = profile.uid;
+        } else {
+          throw new Error('No se pudo encontrar el UID del usuario. Debe estar registrado en Firebase Auth primero.');
+        }
+      }
+      
+      // ✅ Actualizar usando el servicio de sincronización global
+      // Esto notificará automáticamente a TODOS los módulos de la app
+      await userSyncService.updateUserProfile(selectedUser.uid, userData);
+      
+      // También actualizar en el store local
       await updateUser(selectedUser.uid, userData);
+      
       setShowEditModal(false);
       setSelectedUser(null);
-      showSuccess('Usuario editado correctamente');
+      showSuccess('✅ Usuario editado y sincronizado en toda la aplicación');
+      
+      console.log('✅ Usuario actualizado y notificación global enviada');
     } catch (error) {
       logger.error('Error editando usuario:', error);
       showError('Error al editar usuario: ' + error.message);

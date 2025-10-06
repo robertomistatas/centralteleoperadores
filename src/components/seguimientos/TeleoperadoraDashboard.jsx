@@ -21,6 +21,7 @@ import { useAuth } from '../../AuthContext';
 import { useCallStore, useAppStore, USER_ROLES } from '../../stores';
 import { useSeguimientosStore } from '../../stores/useSeguimientosStore';
 import usePermissions from '../../hooks/usePermissions';
+import { useUserSync } from '../../hooks/useUserSync'; // ✅ Hook de sincronización
 import { seguimientoService } from '../../services/seguimientoService';
 import MetricCard from './MetricCard';
 import BeneficiaryCard from './BeneficiaryCard';
@@ -42,6 +43,12 @@ const TeleoperadoraDashboard = () => {
     clearStore 
   } = useSeguimientosStore();
 
+  // ✅ NUEVO: Hook de sincronización global de perfil
+  const { profile: syncedProfile, isLoading: profileLoading } = useUserSync(authUser?.uid);
+  
+  // Usar perfil sincronizado si está disponible, sino usar el de usePermissions
+  const currentProfile = syncedProfile || user;
+
   // Estados principales
   const [beneficiarios, setBeneficiarios] = useState([]);
   const [seguimientos, setSeguimientos] = useState([]);
@@ -53,8 +60,16 @@ const TeleoperadoraDashboard = () => {
   // Estados de la UI
   const [activeFilter, setActiveFilter] = useState('todos'); // todos, al-dia, pendientes, urgentes
 
-  // Usar datos de usePermissions que ya tiene la lógica de admin corregida
-  const currentOperatorName = isAdmin ? 'Administrador' : user?.displayName || user?.email;
+  // ✅ Usar datos sincronizados del perfil
+  const currentOperatorName = isAdmin ? 'Administrador' : (currentProfile?.displayName || currentProfile?.email || user?.displayName || user?.email);
+  const currentOperatorEmail = currentProfile?.email || user?.email || authUser?.email;
+
+  console.log('👤 Perfil actual sincronizado:', {
+    email: currentOperatorEmail,
+    nombre: currentOperatorName,
+    syncedProfile: !!syncedProfile,
+    isAdmin
+  });
 
   // Cargar datos iniciales - DIRECTO DESDE FIREBASE
   useEffect(() => {
@@ -584,7 +599,7 @@ const TeleoperadoraDashboard = () => {
                 <h1 className="text-2xl font-bold text-gray-900">Seguimientos Periódicos</h1>
               </div>
               <p className="text-gray-600 mt-1">
-                Cartera de beneficiarios - {user?.email || currentOperatorName}
+                Cartera de beneficiarios - {currentOperatorEmail}
               </p>
             </div>
 
