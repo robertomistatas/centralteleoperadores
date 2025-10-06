@@ -10,6 +10,7 @@ import { Badge } from '../components/ui/badge';
 import { initializeMetricsStructure, processExcelDataManually } from '../utils/metricsInitializer';
 import { setupSuperAdminProfile, checkCurrentPermissions } from '../utils/setupAdmin';
 import { useCallStore } from '../stores';
+import { useUIStore } from '../stores';
 
 function MetricsTestPanel() {
   const [metricsEnabled, setMetricsEnabled] = useState(
@@ -18,18 +19,19 @@ function MetricsTestPanel() {
   const [isInitializing, setIsInitializing] = useState(false);
   const [initResult, setInitResult] = useState(null);
   const { callData } = useCallStore();
+  const showInfo = useUIStore(state => state.showInfo);
 
   const enableMetrics = () => {
     localStorage.setItem('showMetricsApp', 'true');
     setMetricsEnabled(true);
-    // Recargar para mostrar la nueva interfaz
-    window.location.reload();
+    // Informar al usuario que debe recargar manualmente
+    showInfo('Vista de métricas habilitada. Por favor, recargue la página para ver los cambios.');
   };
 
   const disableMetrics = () => {
     localStorage.setItem('showMetricsApp', 'false');
     setMetricsEnabled(false);
-    window.location.reload();
+    showInfo('Vista de métricas deshabilitada. Por favor, recargue la página para ver los cambios.');
   };
 
   const handleInitializeDatabase = async () => {

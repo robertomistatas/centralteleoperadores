@@ -3,7 +3,9 @@ import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, 
 import * as XLSX from 'xlsx';
 import { useAuth } from './AuthContext';
 import { operatorService, assignmentService, callDataService, resetErrorState } from './firestoreService';
-import { useCallStore, useAppStore } from './stores';
+import { useCallStore, useAppStore, useUIStore, useBeneficiaryStore, useSeguimientosStore } from './stores';
+import { ToastContainer } from './components/ui/Toast';
+import logger from './utils/logger';
 import AuditDemo from './components/examples/AuditDemo';
 import ErrorBoundary from './components/ErrorBoundary';
 import ZustandTest from './test/ZustandTest';
@@ -27,6 +29,14 @@ const TeleasistenciaApp = () => {
     canViewConfig,
     checkModuleAccess
   } = usePermissions();
+  
+  // ✅ UI STORE PARA TOASTS Y NOTIFICACIONES
+  const toasts = useUIStore(state => state.toasts);
+  const dismissToast = useUIStore(state => state.dismissToast);
+  const showSuccess = useUIStore(state => state.showSuccess);
+  const showError = useUIStore(state => state.showError);
+  const showWarning = useUIStore(state => state.showWarning);
+  const showInfo = useUIStore(state => state.showInfo);
   
   // ✅ FUNCIÓN UTILITARIA CENTRALIZADA: Formatear fechas al formato chileno DD-MM-YYYY
   const formatToChileanDate = (dateValue) => {
@@ -99,7 +109,8 @@ const TeleasistenciaApp = () => {
   } = useAppStore();
 
   // Estados locales (mantenemos algunos para compatibilidad durante la transición)
-  const [activeTab, setActiveTab] = useState('dashboard');
+  // ✅ Inicializar con defaultTab o 'dashboard' como fallback
+  const [activeTab, setActiveTab] = useState(defaultTab || 'dashboard');
   
   const [callData, setCallData] = useState([]);
   const [assignments, setAssignments] = useState([]);
@@ -239,16 +250,25 @@ const TeleasistenciaApp = () => {
 
   // ✅ ACTUALIZAR TAB POR DEFECTO SEGÚN PERMISOS
   useEffect(() => {
-    // Solo cambiar si explícitamente no tiene acceso al dashboard y hay un defaultTab diferente
-    if (defaultTab && 
-        defaultTab !== 'dashboard' && 
-        activeTab === 'dashboard' && 
-        !checkModuleAccess('dashboard') && 
-        dataLoaded) {
-      console.log('🔄 Cambiando tab por falta de permisos de dashboard:', { from: activeTab, to: defaultTab });
-      setActiveTab(defaultTab);
+    // Cambiar tab si:
+    // 1. Hay un defaultTab definido
+    // 2. El tab actual no es accesible para el usuario
+    // 3. O el defaultTab es diferente y acabamos de cargar permisos
+    if (defaultTab) {
+      const currentTabAccessible = checkModuleAccess(activeTab);
+      
+      // Si el tab actual no es accesible, cambiar al defaultTab
+      if (!currentTabAccessible && defaultTab !== activeTab) {
+        console.log('🔄 Cambiando tab por falta de permisos:', { from: activeTab, to: defaultTab, accessible: currentTabAccessible });
+        setActiveTab(defaultTab);
+      }
+      // Si estamos en dashboard y el usuario no tiene acceso
+      else if (activeTab === 'dashboard' && !checkModuleAccess('dashboard') && defaultTab !== 'dashboard') {
+        console.log('🔄 Cambiando desde dashboard (sin acceso) a:', defaultTab);
+        setActiveTab(defaultTab);
+      }
     }
-  }, [defaultTab, checkModuleAccess, dataLoaded, activeTab]);
+  }, [defaultTab, checkModuleAccess, activeTab]);
 
   // OPTIMIZACIÓN: Re-analizar solo cuando sea necesario con debounce
   useEffect(() => {
@@ -347,17 +367,101 @@ const TeleasistenciaApp = () => {
           totalAsignaciones: allSystemAssignmentsArray?.length || 0
         });
       } else {
-        console.log('👤 Teleoperadora detectada - Cargando solo datos del usuario');
-        // Teleoperadora ve solo sus datos
-        const [specificOperators, specificAssignments, specificCallData] = await Promise.all([
+        console.log('👤 Teleoperadora detectada - Cargando datos del usuario + callData del sistema');
+        
+        // 🔥 CORRECCIÓN CRÍTICA: Teleoperadoras necesitan acceso al Excel completo del sistema
+        // para poder ver el historial de seguimientos de sus beneficiarios asignados
+        // El Excel está guardado en el documento callData del super admin
+        
+        // Intentar cargar callData del sistema (múltiples fuentes posibles)
+        let systemCallData = [];
+        
+        // Estrategia 1: Intentar cargar del super admin (roberto@mistatas.com)
+        try {
+          console.log('🔍 Estrategia 1: Buscando perfil del super admin...');
+          const { userManagementService } = await import('./services/userManagementService');
+          const superAdminProfile = await userManagementService.getUserProfileByEmail('roberto@mistatas.com');
+          
+          if (superAdminProfile && superAdminProfile.id) {
+            console.log('✅ Perfil del super admin encontrado:', {
+              id: superAdminProfile.id,
+              email: superAdminProfile.email,
+              role: superAdminProfile.role
+            });
+            
+            const superAdminCallData = await callDataService.getCallData(superAdminProfile.id);
+            console.log('📊 CallData obtenido del super admin:', {
+              length: superAdminCallData?.length || 0,
+              hasData: !!(superAdminCallData && superAdminCallData.length > 0)
+            });
+            
+            if (superAdminCallData && superAdminCallData.length > 0) {
+              systemCallData = superAdminCallData;
+              console.log('✅ CallData del super admin cargado:', systemCallData.length, 'registros');
+            }
+          } else {
+            console.warn('⚠️ No se encontró perfil del super admin en userProfiles');
+          }
+        } catch (error) {
+          console.error('❌ Error cargando callData del super admin:', error);
+        }
+        
+        // Estrategia 2: Intentar con carolina@mistatas.com (admin alternativo)
+        if (systemCallData.length === 0) {
+          try {
+            console.log('🔍 Estrategia 2: Intentando con admin alternativo (carolina@mistatas.com)...');
+            const { userManagementService } = await import('./services/userManagementService');
+            const carolinaProfile = await userManagementService.getUserProfileByEmail('carolina@mistatas.com');
+            
+            if (carolinaProfile && carolinaProfile.id) {
+              console.log('✅ Perfil de Carolina encontrado:', carolinaProfile.id);
+              const carolinaCallData = await callDataService.getCallData(carolinaProfile.id);
+              
+              if (carolinaCallData && carolinaCallData.length > 0) {
+                systemCallData = carolinaCallData;
+                console.log('✅ CallData de Carolina cargado:', systemCallData.length, 'registros');
+              }
+            }
+          } catch (error) {
+            console.warn('⚠️ No se pudo cargar callData de Carolina:', error.message);
+          }
+        }
+        
+        // Estrategia 3: Buscar en documento 'system' compartido
+        if (systemCallData.length === 0) {
+          console.log('🔍 Estrategia 3: Buscando callData en documento del sistema...');
+          try {
+            const systemDoc = await callDataService.getCallData('system');
+            if (systemDoc && systemDoc.length > 0) {
+              systemCallData = systemDoc;
+              console.log('✅ CallData del sistema cargado:', systemCallData.length, 'registros');
+            }
+          } catch (error) {
+            console.warn('⚠️ No se pudo cargar callData del sistema:', error.message);
+          }
+        }
+        
+        // Si aún no hay callData, listar todos los documentos disponibles para debugging
+        if (systemCallData.length === 0) {
+          console.warn('⚠️ No se encontró callData del sistema. Esto afectará las métricas del dashboard.');
+          console.warn('💡 Solución: El super admin debe cargar el Excel de seguimientos desde el Dashboard');
+        }
+        
+        // Cargar datos específicos de la teleoperadora
+        const [specificOperators, specificAssignments] = await Promise.all([
           operatorService.getByUser(user.uid),
-          assignmentService.getAllUserAssignments(user.uid),
-          callDataService.getCallData(user.uid)
+          assignmentService.getAllUserAssignments(user.uid)
         ]);
         
         userOperators = specificOperators;
         userAssignments = specificAssignments;
-        userCallData = specificCallData;
+        userCallData = systemCallData; // 🔥 Usar callData del sistema completo
+        
+        console.log('👤 Teleoperadora - Datos cargados:', {
+          operadores: userOperators?.length || 0,
+          asignaciones: Object.keys(userAssignments || {}).length,
+          callDataRegistros: userCallData?.length || 0
+        });
       }
       
       // Verificar si la operación fue exitosa
@@ -529,8 +633,8 @@ const TeleasistenciaApp = () => {
       setOperatorForm({ name: '', email: '', phone: '' });
       setShowCreateOperator(false);
     } catch (error) {
-      console.error('Error creating operator:', error);
-      alert('Error al crear teleoperador. Intenta nuevamente.');
+      logger.error('Error creating operator:', error);
+      showError('Error al crear el operador. Por favor, inténtelo nuevamente.');
     }
   };
 
@@ -577,15 +681,15 @@ const TeleasistenciaApp = () => {
           console.log('✅ Eliminado del Zustand store');
         }
       } catch (zustandError) {
-        console.warn('⚠️ Error actualizando Zustand store:', zustandError.message);
+        logger.warn('Error actualizando Zustand store:', zustandError.message);
       }
       
-      console.log('✅ Teleoperadora eliminada exitosamente');
-      alert('✅ Teleoperadora eliminada exitosamente');
+      logger.info('Operadora eliminada exitosamente');
+      showSuccess('Operadora eliminada exitosamente');
       
     } catch (error) {
-      console.error('❌ Error eliminando teleoperadora:', error);
-      alert('❌ Error al eliminar teleoperadora. Intenta nuevamente o contacta al administrador.');
+      logger.error('Error eliminando operadora:', error);
+      showError('Error al eliminar la operadora. Por favor, inténtelo nuevamente o contacte al administrador.');
     }
   };
 
@@ -609,7 +713,7 @@ const TeleasistenciaApp = () => {
     );
 
     if (operatorsToDelete.length === 0) {
-      alert('✅ No se encontraron teleoperadoras ficticias para eliminar.');
+      showInfo('No se encontraron operadoras ficticias para eliminar.');
       return;
     }
 
@@ -626,13 +730,13 @@ const TeleasistenciaApp = () => {
     operatorsToDelete.forEach(async (operator) => {
       try {
         await handleDeleteOperator(operator.id);
-        console.log(`✅ Eliminada: ${operator.name}`);
+        logger.info(`Eliminada: ${operator.name}`);
       } catch (error) {
-        console.error(`❌ Error eliminando ${operator.name}:`, error);
+        logger.error(`Error eliminando ${operator.name}:`, error);
       }
     });
 
-    alert(`✅ Proceso de limpieza iniciado para ${operatorsToDelete.length} teleoperadoras ficticias.`);
+    showInfo(`Proceso de limpieza iniciado para ${operatorsToDelete.length} operadoras ficticias.`);
   };
 
   const handleFileUploadForOperator = (event, operatorId) => {
@@ -701,9 +805,10 @@ const TeleasistenciaApp = () => {
       });
 
       setUploadingFor(null);
+      showSuccess('Asignaciones guardadas correctamente');
     } catch (error) {
-      console.error('Error saving assignments:', error);
-      alert('Error al guardar asignaciones. Intenta nuevamente.');
+      logger.error('Error saving assignments:', error);
+      showError('Error al guardar las asignaciones. Por favor, inténtelo nuevamente.');
     }
   };
 
@@ -717,9 +822,10 @@ const TeleasistenciaApp = () => {
 
       // También eliminar de assignments generales
       setAssignments(prev => prev.filter(a => !a.id.toString().startsWith(`${operatorId}-`)));
+      showSuccess('Asignaciones limpiadas correctamente');
     } catch (error) {
-      console.error('Error clearing assignments:', error);
-      alert('Error al limpiar asignaciones. Intenta nuevamente.');
+      logger.error('Error clearing assignments:', error);
+      showError('Error al limpiar las asignaciones. Por favor, inténtelo nuevamente.');
     }
   };
 
@@ -1599,6 +1705,10 @@ const TeleasistenciaApp = () => {
   };
 
   const Dashboard = () => {
+    // 🎯 Estado local para métricas de operador (evita setState durante render)
+    const [localOperatorMetrics, setLocalOperatorMetrics] = React.useState([]);
+    const [localHourlyDistribution, setLocalHourlyDistribution] = React.useState([]);
+
     // 🔧 SINCRONIZACIÓN: Si Zustand no tiene datos pero el estado local sí, sincronizar
     React.useEffect(() => {
       // Usar setTimeout para evitar setState durante render
@@ -1631,14 +1741,18 @@ const TeleasistenciaApp = () => {
     const operatorCount = zustandOperators.length;
     const activeAssignments = zustandOperatorAssignments ? Object.keys(zustandOperatorAssignments).length : 0;
 
-    // 📊 ANÁLISIS OPTIMIZADO - Usar funciones del store optimizado sin logs excesivos
-    const operatorMetrics = getOperatorMetrics(assignmentsToUse);
-    const hourlyDistribution = getHourlyDistribution();
+    // 📊 ANÁLISIS OPTIMIZADO - Calcular métricas en useEffect para evitar setState durante render
+    React.useEffect(() => {
+      const operatorMetrics = getOperatorMetrics(assignmentsToUse);
+      const hourlyDistribution = getHourlyDistribution();
+      setLocalOperatorMetrics(operatorMetrics || []);
+      setLocalHourlyDistribution(hourlyDistribution || []);
+    }, [assignmentsToUse?.length, getOperatorMetrics, getHourlyDistribution]);
     
     // 🚨 OPTIMIZACIÓN: Métricas de emergencia simplificadas
-    let finalOperatorMetrics = operatorMetrics;
+    let finalOperatorMetrics = localOperatorMetrics;
     
-    if (!operatorMetrics || operatorMetrics.length === 0) {
+    if (!localOperatorMetrics || localOperatorMetrics.length === 0) {
       // Crear métricas básicas sin loops complejos
       const emergencyMetrics = Object.entries(operatorAssignments).map(([operatorId, assignments]) => {
         const operator = operators.find(op => op.id === operatorId);
@@ -2741,9 +2855,13 @@ const TeleasistenciaApp = () => {
   );
 
   return (
-    <div className="flex h-screen bg-gray-100">
-      <Sidebar />
-      <div className="flex-1 overflow-auto">
+    <>
+      {/* Sistema de Notificaciones Toast */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      
+      <div className="flex h-screen bg-gray-100">
+        <Sidebar />
+        <div className="flex-1 overflow-auto">
         <div className="p-6">
           <div className="mb-6">
             <h1 className="text-2xl font-bold text-gray-900">
@@ -2834,6 +2952,7 @@ const TeleasistenciaApp = () => {
         </div>
       </div>
     </div>
+    </>
   );
 };
 

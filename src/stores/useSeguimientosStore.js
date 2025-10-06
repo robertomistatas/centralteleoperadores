@@ -1,29 +1,25 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import { 
-  collection, 
-  query, 
-  where, 
-  orderBy, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc,
-  serverTimestamp 
-} from 'firebase/firestore';
-import { db } from '../firebase';
+import firestoreService from '../services/firestoreService';
 import { seguimientoService } from '../services/seguimientoService';
+import { normalizeName } from '../utils/validators';
+import logger from '../utils/logger';
+import { auth } from '../firebase';
+
+const { COLLECTIONS } = firestoreService;
 
 /**
  * Store para gestión de seguimientos y eventos del calendario
  * Maneja la sincronización en tiempo real con Firestore
+ * 
+ * Refactorización: Usa firestoreService centralizado y nomenclatura operatorId/operatorName
  */
 export const useSeguimientosStore = create(
   subscribeWithSelector((set, get) => ({
     // Estados del store
-    seguimientos: [], // Array de seguimientos de la teleoperadora
+    seguimientos: [], // Array de seguimientos del operador
     calendarEvents: [], // Eventos formateados para el calendario
+    byBeneficiary: {}, // Índice de seguimientos por beneficiario
     isLoading: false,
     error: null,
     currentUserId: null,
@@ -31,9 +27,32 @@ export const useSeguimientosStore = create(
     selectedDate: null, // Fecha seleccionada en el calendario
     dailyContacts: [], // Contactos del día seleccionado
 
-    // Acción para inicializar la suscripción a Firestore
+    // ===== SUSCRIPCIÓN A FIRESTORE =====
+    
+    /**
+     * Inicializa suscripción a Firestore para un operador
+     * @param {string} userId - ID del operador (operatorId)
+     */
     initializeSubscription: (userId) => {
       const { unsubscribe: currentUnsubscribe } = get();
+      
+      // 🔥 CRÍTICO: Verificar que Firebase Auth tenga un usuario autenticado
+      const currentUser = auth.currentUser;
+      
+      if (!currentUser) {
+        logger.warn('⚠️ Intento de suscripción sin usuario autenticado. Esperando autenticación...');
+        
+        // Esperar a que Auth esté listo
+        const unsubscribeAuth = auth.onAuthStateChanged((user) => {
+          if (user) {
+            logger.info('✅ Usuario autenticado, reiniciando suscripción:', user.email);
+            unsubscribeAuth(); // Cancelar listener de auth
+            get().initializeSubscription(userId); // Reintentar suscripción
+          }
+        });
+        
+        return;
+      }
       
       // Cancelar suscripción anterior si existe
       if (currentUnsubscribe) {
@@ -45,40 +64,46 @@ export const useSeguimientosStore = create(
         error: null, 
         currentUserId: userId,
         seguimientos: [],
-        calendarEvents: []
+        calendarEvents: [],
+        byBeneficiary: {},
       });
 
+      logger.store('Inicializando suscripción de seguimientos para operador:', userId);
+
       try {
-        // Crear query para seguimientos del usuario ordenados por fecha
-        const q = query(
-          collection(db, 'seguimientos'),
-          where('userId', '==', userId),
-          orderBy('fechaContacto', 'desc')
-        );
-
-        // Suscribirse a cambios en tiempo real
-        const unsubscribe = onSnapshot(q, 
-          (querySnapshot) => {
-            const seguimientos = [];
-            querySnapshot.forEach((doc) => {
-              seguimientos.push({
-                id: doc.id,
-                ...doc.data()
-              });
+        // Suscribirse a cambios en tiempo real usando firestoreService
+        const unsubscribe = firestoreService.onSnapshotCollection(
+          COLLECTIONS.SEGUIMIENTOS,
+          {
+            where: ['operatorId', '==', userId],
+            orderBy: ['fechaContacto', 'desc'],
+          },
+          (seguimientos) => {
+            logger.store('Seguimientos actualizados:', seguimientos.length);
+            
+            // Crear índice por beneficiario
+            const byBeneficiary = {};
+            seguimientos.forEach((seg) => {
+              const benefId = seg.beneficiarioId || seg.beneficiaryId;
+              if (benefId) {
+                if (!byBeneficiary[benefId]) {
+                  byBeneficiary[benefId] = [];
+                }
+                byBeneficiary[benefId].push(seg);
+              }
             });
-
-            console.log('📅 Seguimientos actualizados:', seguimientos.length);
             
             // Actualizar seguimientos y generar eventos del calendario
             set({ 
               seguimientos,
+              byBeneficiary,
               calendarEvents: get().formatSeguimientosToEvents(seguimientos),
               isLoading: false,
               error: null
             });
           },
           (error) => {
-            console.error('❌ Error en suscripción de seguimientos:', error);
+            logger.error('Error en suscripción de seguimientos:', error);
             set({ 
               error: error.message,
               isLoading: false
@@ -88,12 +113,19 @@ export const useSeguimientosStore = create(
 
         set({ unsubscribe });
       } catch (error) {
-        console.error('❌ Error inicializando suscripción:', error);
+        logger.error('Error inicializando suscripción:', error);
         set({ 
           error: error.message,
           isLoading: false
         });
       }
+    },
+
+    /**
+     * Alias para compatibilidad (subscribeToTeleoperadora)
+     */
+    subscribeToTeleoperadora: (operatorId) => {
+      get().initializeSubscription(operatorId);
     },
 
     // Función para formatear seguimientos a eventos del calendario
@@ -154,8 +186,13 @@ export const useSeguimientosStore = create(
       });
     },
 
-    // Agregar nuevo seguimiento
-    addSeguimiento: async (seguimientoData) => {
+    // ===== ACCIONES CRUD =====
+
+    /**
+     * Crea un nuevo seguimiento
+     * @param {object} seguimientoData - Datos del seguimiento
+     */
+    createSeguimiento: async (seguimientoData) => {
       const { currentUserId } = get();
       if (!currentUserId) {
         throw new Error('Usuario no autenticado');
@@ -164,18 +201,32 @@ export const useSeguimientosStore = create(
       set({ isLoading: true, error: null });
 
       try {
+        logger.store('Creando seguimiento');
+        
+        // Normalizar nombre del beneficiario
+        const normalizedData = {
+          ...seguimientoData,
+          beneficiarioNombre: normalizeName(seguimientoData.beneficiarioNombre || seguimientoData.nombre),
+          operatorId: currentUserId,
+          operatorName: seguimientoData.operatorName || '',
+        };
+        
         const seguimientoId = await seguimientoService.createSeguimiento(
           currentUserId, 
-          seguimientoData
+          normalizedData
         );
         
-        console.log('✅ Seguimiento agregado al calendario:', seguimientoId);
+        logger.store('Seguimiento creado:', seguimientoId);
         
         // La actualización del store se hace automáticamente via onSnapshot
         set({ isLoading: false });
+        
+        // Notificar a métricas que hubo cambio (si se integra con useMetricsStore)
+        // useMetricsStore.getState().recomputeForBeneficiary(seguimientoData.beneficiarioId);
+        
         return seguimientoId;
       } catch (error) {
-        console.error('❌ Error agregando seguimiento:', error);
+        logger.error('Error creando seguimiento:', error);
         set({ 
           error: error.message,
           isLoading: false
@@ -184,20 +235,31 @@ export const useSeguimientosStore = create(
       }
     },
 
-    // Actualizar seguimiento existente
+    /**
+     * Alias para compatibilidad
+     */
+    addSeguimiento: async (seguimientoData) => {
+      return await get().createSeguimiento(seguimientoData);
+    },
+
+    /**
+     * Actualiza un seguimiento existente
+     * @param {string} seguimientoId - ID del seguimiento
+     * @param {object} updates - Campos a actualizar
+     */
     updateSeguimiento: async (seguimientoId, updates) => {
       set({ isLoading: true, error: null });
 
       try {
-        await updateDoc(doc(db, 'seguimientos', seguimientoId), {
-          ...updates,
-          updatedAt: serverTimestamp()
-        });
+        logger.store('Actualizando seguimiento:', seguimientoId);
+        
+        await firestoreService.update(COLLECTIONS.SEGUIMIENTOS, seguimientoId, updates);
 
-        console.log('✅ Seguimiento actualizado:', seguimientoId);
+        logger.store('Seguimiento actualizado');
         set({ isLoading: false });
+        return true;
       } catch (error) {
-        console.error('❌ Error actualizando seguimiento:', error);
+        logger.error('Error actualizando seguimiento:', error);
         set({ 
           error: error.message,
           isLoading: false
@@ -206,16 +268,23 @@ export const useSeguimientosStore = create(
       }
     },
 
-    // Eliminar seguimiento
+    /**
+     * Elimina un seguimiento
+     * @param {string} seguimientoId - ID del seguimiento
+     */
     deleteSeguimiento: async (seguimientoId) => {
       set({ isLoading: true, error: null });
 
       try {
-        await deleteDoc(doc(db, 'seguimientos', seguimientoId));
-        console.log('✅ Seguimiento eliminado:', seguimientoId);
+        logger.store('Eliminando seguimiento:', seguimientoId);
+        
+        await firestoreService.remove(COLLECTIONS.SEGUIMIENTOS, seguimientoId);
+        
+        logger.store('Seguimiento eliminado');
         set({ isLoading: false });
+        return true;
       } catch (error) {
-        console.error('❌ Error eliminando seguimiento:', error);
+        logger.error('Error eliminando seguimiento:', error);
         set({ 
           error: error.message,
           isLoading: false

@@ -1,23 +1,37 @@
 // Barrel file para centralizar todas las exportaciones de stores
 // Facilita las importaciones y mantiene el código organizado
 
+// ===== STORES REFACTORIZADOS (v2) =====
+export { default as useUIStore } from './useUIStore';
+export { default as useAuthStore } from './useAuthStore';
+export { default as useAsignationsStore } from './useAsignationsStore';
+
+// ===== STORES EXISTENTES (compatibles) =====
 export { default as useUserStore } from './useUserStore';
 export { default as useCallStore } from './useCallStore';
 export { default as useAppStore } from './useAppStore';
 export { default as useBeneficiaryStore } from './useBeneficiaryStore';
 export { default as useUserManagementStore } from './useUserManagementStore';
-export { useSeguimientosStore } from './useSeguimientosStore';
+export { useSeguimientosStore } from './useSeguimientosStore'; // ACTUALIZADO con firestoreService
 export { useGestionesStore, GESTION_ESTADOS, ESTADO_COLORS } from './useGestionesStore';
+export { default as useMetricsStore } from './useMetricsStore'; // Mantener el existente
 
 // Exportar hooks combinados útiles
 export const useStores = () => ({
+  // Stores refactorizados
+  uiStore: useUIStore,
+  authStore: useAuthStore,
+  asignationsStore: useAsignationsStore,
+  
+  // Stores existentes
   userStore: useUserStore,
   callStore: useCallStore,
   appStore: useAppStore,
   beneficiaryStore: useBeneficiaryStore,
   userManagementStore: useUserManagementStore,
   seguimientosStore: useSeguimientosStore,
-  gestionesStore: useGestionesStore
+  gestionesStore: useGestionesStore,
+  metricsStore: useMetricsStore,
 });
 
 // Estados y constantes para auditoría de llamadas

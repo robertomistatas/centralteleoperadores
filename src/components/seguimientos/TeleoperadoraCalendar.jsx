@@ -340,7 +340,7 @@ const TeleoperadoraCalendar = () => {
       <DayDetailsModal />
 
       {/* Estilos CSS para react-big-calendar con Tailwind */}
-      <style jsx global>{`
+      <style>{`
         .rbc-calendar {
           font-family: inherit;
         }

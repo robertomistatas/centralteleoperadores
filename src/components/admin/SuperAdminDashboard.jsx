@@ -29,6 +29,8 @@ import {
 import { useAuth } from '../../AuthContext';
 import useUserManagementStore from '../../stores/useUserManagementStore';
 import { userManagementService } from '../../services/userManagementService';
+import { useUIStore } from '../../stores';
+import logger from '../../utils/logger';
 import CreateUserModal from './CreateUserModal';
 import EditUserModal from './EditUserModal';
 
@@ -58,6 +60,12 @@ const SuperAdminDashboard = () => {
     isSuperAdmin,
     exportUsers
   } = useUserManagementStore();
+
+  // UI Store hooks for toasts
+  const showSuccess = useUIStore(state => state.showSuccess);
+  const showError = useUIStore(state => state.showError);
+  const showInfo = useUIStore(state => state.showInfo);
+  const showWarning = useUIStore(state => state.showWarning);
 
   // Estados locales
   const [activeTab, setActiveTab] = useState('overview'); // overview, users, system, security
@@ -113,7 +121,7 @@ const SuperAdminDashboard = () => {
   const handleCreateUser = async (userData) => {
     setActionLoading(true);
     try {
-      console.log('🚀 Iniciando creación inteligente de usuario:', userData.email);
+      logger.auth('Iniciando creación inteligente de usuario:', userData.email);
       
       // Importar servicio inteligente
       const { smartUserCreationService } = await import('../../services/smartUserCreationService');
@@ -121,7 +129,7 @@ const SuperAdminDashboard = () => {
       // Usar creación inteligente que maneja automáticamente la sincronización
       const result = await smartUserCreationService.createUserIntelligent(userData);
       
-      console.log('✅ Usuario creado con sistema inteligente:', result);
+      logger.auth('Usuario creado con sistema inteligente:', result);
       
       // También usar el método tradicional como respaldo
       await createUser(userData);
@@ -129,17 +137,19 @@ const SuperAdminDashboard = () => {
       setShowCreateModal(false);
       
       // Mostrar mensaje de éxito con instrucciones
-      alert(`✅ Usuario creado exitosamente!\n\n` +
-            `📧 Email: ${userData.email}\n` +
-            `👤 Rol: ${userData.role}\n\n` +
-            `📋 Instrucciones:\n` +
-            `1. El usuario debe registrarse en Firebase Auth con el email: ${userData.email}\n` +
-            `2. Una vez registrado, será reconocido automáticamente con el rol asignado\n` +
-            `3. No necesita pasos adicionales - la sincronización es automática`);
+      showSuccess(
+        `Usuario creado exitosamente\n\n` +
+        `📧 Email: ${userData.email}\n` +
+        `👤 Rol: ${userData.role}\n\n` +
+        `Instrucciones:\n` +
+        `1. El usuario debe registrarse en Firebase Auth con el email: ${userData.email}\n` +
+        `2. Una vez registrado, será reconocido automáticamente con el rol asignado\n` +
+        `3. No necesita pasos adicionales - la sincronización es automática`
+      );
       
     } catch (error) {
-      console.error('Error creando usuario:', error);
-      alert('Error al crear usuario: ' + error.message);
+      logger.error('Error creando usuario:', error);
+      showError('Error al crear usuario: ' + error.message);
     } finally {
       setActionLoading(false);
     }
@@ -152,9 +162,10 @@ const SuperAdminDashboard = () => {
       await updateUser(selectedUser.uid, userData);
       setShowEditModal(false);
       setSelectedUser(null);
+      showSuccess('Usuario editado correctamente');
     } catch (error) {
-      console.error('Error editando usuario:', error);
-      alert('Error al editar usuario: ' + error.message);
+      logger.error('Error editando usuario:', error);
+      showError('Error al editar usuario: ' + error.message);
     } finally {
       setActionLoading(false);
     }
@@ -162,14 +173,15 @@ const SuperAdminDashboard = () => {
 
   // Manejar eliminación de usuario
   const handleDeleteUser = async (userId) => {
-    if (!confirm('¿Estás seguro de que deseas eliminar este usuario?')) return;
+    if (!confirm('¿Está seguro de que desea eliminar este usuario?')) return;
 
     setActionLoading(true);
     try {
       await deleteUser(userId);
+      showSuccess('Usuario eliminado correctamente');
     } catch (error) {
-      console.error('Error eliminando usuario:', error);
-      alert('Error al eliminar usuario: ' + error.message);
+      logger.error('Error eliminando usuario:', error);
+      showError('Error al eliminar usuario: ' + error.message);
     } finally {
       setActionLoading(false);
     }
@@ -180,9 +192,10 @@ const SuperAdminDashboard = () => {
     setActionLoading(true);
     try {
       await toggleUserStatus(userId);
+      showSuccess('Estado del usuario actualizado correctamente');
     } catch (error) {
-      console.error('Error cambiando estado de usuario:', error);
-      alert('Error al cambiar estado de usuario: ' + error.message);
+      logger.error('Error cambiando estado de usuario:', error);
+      showError('Error al cambiar estado de usuario: ' + error.message);
     } finally {
       setActionLoading(false);
     }
@@ -194,9 +207,10 @@ const SuperAdminDashboard = () => {
     try {
       await userManagementService.createTestUsers();
       await loadUsers();
+      showSuccess('Usuarios de prueba creados correctamente');
     } catch (error) {
-      console.error('Error creando usuarios de prueba:', error);
-      alert('Error al crear usuarios de prueba: ' + error.message);
+      logger.error('Error creando usuarios de prueba:', error);
+      showError('Error al crear usuarios de prueba: ' + error.message);
     } finally {
       setIsCreatingTestUsers(false);
     }
@@ -204,15 +218,16 @@ const SuperAdminDashboard = () => {
 
   // Limpiar usuarios de prueba
   const handleCleanTestUsers = async () => {
-    if (!confirm('¿Estás seguro de que deseas eliminar todos los usuarios de prueba?')) return;
+    if (!confirm('¿Está seguro de que desea eliminar todos los usuarios de prueba?')) return;
 
     setIsCleaningTestUsers(true);
     try {
       await userManagementService.cleanTestUsers();
       await loadUsers();
+      showSuccess('Usuarios de prueba eliminados correctamente');
     } catch (error) {
-      console.error('Error limpiando usuarios de prueba:', error);
-      alert('Error al limpiar usuarios de prueba: ' + error.message);
+      logger.error('Error limpiando usuarios de prueba:', error);
+      showError('Error al limpiar usuarios de prueba: ' + error.message);
     } finally {
       setIsCleaningTestUsers(false);
     }

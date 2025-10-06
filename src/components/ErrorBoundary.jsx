@@ -31,8 +31,17 @@ class ErrorBoundary extends React.Component {
             </pre>
           </details>
           <button
-            onClick={() => window.location.reload()}
+            onClick={() => {
+              // Resetear estado del boundary y permitir retry sin recarga completa
+              this.setState({ hasError: false, error: null });
+            }}
             className="mt-4 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700"
+          >
+            Intentar nuevamente
+          </button>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 ml-2 bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700"
           >
             Recargar página
           </button>

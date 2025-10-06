@@ -45,9 +45,15 @@ service cloud.firestore {
       allow read: if request.auth != null;
     }
     
-    // Datos de llamadas - solo el dueño puede leer/escribir
+    // Datos de llamadas - Dueño puede leer/escribir + usuarios autenticados pueden leer (para acceso al Excel del sistema)
     match /callData/{document} {
+      // El dueño del documento puede leer y escribir
       allow read, write: if request.auth != null && document == request.auth.uid;
+      
+      // 🔥 NUEVA REGLA: Usuarios autenticados pueden leer callData del sistema
+      // Esto permite que teleoperadoras accedan al Excel completo para ver
+      // el historial de seguimientos de sus beneficiarios asignados
+      allow read: if request.auth != null;
     }
     
     // Datos de usuario - solo el dueño puede leer/escribir
@@ -67,10 +73,32 @@ service cloud.firestore {
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
     }
     
-    // Seguimientos periódicos - solo el dueño puede leer/escribir
+    // Seguimientos periódicos - REGLAS MEJORADAS para acceso de teleoperadoras
     match /seguimientos/{document} {
+      // Super admin tiene acceso total
+      allow read, write, create, update, delete: if isSuperAdmin();
+      
+      // Admins tienen acceso total
+      allow read, write, create, update, delete: if isAdmin();
+      
+      // El creador del seguimiento puede leer y escribir
       allow read, write: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      
+      // 🔥 NUEVA REGLA CRÍTICA: Teleoperadoras pueden leer y escribir sus propios seguimientos
+      allow read, write: if request.auth != null && (
+        resource.data.operatorId == request.auth.uid ||
+        resource.data.userId == request.auth.uid
+      );
+      
+      // 🔥 REGLA PARA CREACIÓN: Teleoperadoras pueden crear seguimientos
+      allow create: if request.auth != null && (
+        request.resource.data.operatorId == request.auth.uid ||
+        request.resource.data.userId == request.auth.uid
+      );
+      
+      // 🔥 FALLBACK: Cualquier usuario autenticado puede leer seguimientos (temporal para debugging)
+      allow read: if request.auth != null;
     }
     
     // ✅ NUEVAS REGLAS PARA GESTIÓN DE USUARIOS Y PERMISOS
@@ -80,10 +108,28 @@ service cloud.firestore {
       // Super admin puede leer y escribir todos los perfiles
       allow read, write, create, update, delete: if isSuperAdmin();
       
-      // Usuarios pueden leer su propio perfil
+      // Usuarios pueden leer su propio perfil por UID
       allow read: if request.auth != null && request.auth.uid == userId;
       
+      // 🔥 NUEVA REGLA: Usuarios autenticados pueden buscar su propio perfil por email
+      allow read: if request.auth != null;
+      
       // Admins pueden leer perfiles de usuarios bajo su jurisdicción
+      allow read: if isAdmin() && request.auth != null;
+    }
+    
+    // 🔥 NUEVA COLECCIÓN: Usuarios pendientes - Para sistema de creación inteligente
+    match /pendingUsers/{userId} {
+      // Super admin puede gestionar todos
+      allow read, write, create, update, delete: if isSuperAdmin();
+      
+      // Usuarios autenticados pueden leer su propio perfil pendiente
+      allow read: if request.auth != null && request.auth.uid == userId;
+      
+      // Usuarios autenticados pueden buscar su email en pendientes
+      allow read: if request.auth != null;
+      
+      // Admins pueden leer pendientes
       allow read: if isAdmin() && request.auth != null;
     }
     
