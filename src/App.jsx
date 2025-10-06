@@ -1788,9 +1788,9 @@ const TeleasistenciaApp = () => {
     const avgCallsPerOperator = operatorCount > 0 ? (metrics.totalCalls / operatorCount).toFixed(1) : 0;
     const contactabilityRate = metrics.uniqueBeneficiaries > 0 ? ((metrics.successfulCalls / metrics.uniqueBeneficiaries) * 100).toFixed(1) : 0;
 
-    // OPTIMIZACIÓN: Top performers con sort simplificado
+    // OPTIMIZACIÓN: Top performers con sort simplificado (ordenado por cobertura)
     const topPerformers = finalOperatorMetrics
-      .sort((a, b) => b.successfulCalls - a.successfulCalls)
+      .sort((a, b) => b.coverageRate - a.coverageRate)
       .slice(0, 3);
 
     const operatorWithMostCalls = finalOperatorMetrics.length > 0 ?
@@ -1924,7 +1924,7 @@ const TeleasistenciaApp = () => {
                     <div>
                       <p className="font-medium">{operator.operatorName}</p>
                       <p className="text-sm text-gray-500">
-                        {operator.totalCalls} llamadas
+                        {operator.contactedBeneficiaries} de {operator.assignedBeneficiaries} beneficiarios
                         {operator.isEmergencyData && (
                           <span className="ml-1 text-xs text-yellow-600">(estimado)</span>
                         )}
@@ -1932,8 +1932,11 @@ const TeleasistenciaApp = () => {
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="font-bold text-green-600">{operator.successfulCalls}</p>
-                    <p className="text-sm text-gray-500">exitosas</p>
+                    <p className="font-bold text-green-600 text-xl">{operator.coverageRate}%</p>
+                    <p className="text-sm text-gray-500">cobertura</p>
+                    <p className="text-xs text-orange-500 mt-1">
+                      {operator.pendingBeneficiaries} pendientes
+                    </p>
                   </div>
                 </div>
               ))}
@@ -1997,13 +2000,13 @@ const TeleasistenciaApp = () => {
                     Operadora
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Beneficiarios
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Cobertura
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Total Llamadas
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Exitosas
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Fallidas
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Tasa Éxito
@@ -2016,6 +2019,7 @@ const TeleasistenciaApp = () => {
               <tbody className="bg-white divide-y divide-gray-200">
                 {finalOperatorMetrics.map((operator, index) => {
                   const operatorSuccessRate = operator.totalCalls > 0 ? ((operator.successfulCalls / operator.totalCalls) * 100).toFixed(1) : 0;
+                  const coverageRate = operator.coverageRate || 0;
                   return (
                     <tr key={index} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -2028,16 +2032,31 @@ const TeleasistenciaApp = () => {
                           <span className="text-sm font-medium text-gray-900">{operator.operatorName}</span>
                         </div>
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm">
+                          <div className="text-gray-900 font-medium">
+                            {operator.contactedBeneficiaries || 0} / {operator.assignedBeneficiaries || 0}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {operator.pendingBeneficiaries || 0} pendientes
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                          coverageRate >= 70 ? 'bg-green-100 text-green-800' : 
+                          coverageRate >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+                        }`}>
+                          {coverageRate}%
+                        </span>
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                           {operator.totalCalls}
                         </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-medium">
-                        {operator.successfulCalls}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-red-600 font-medium">
-                        {operator.failedCalls}
+                        <div className="text-xs text-gray-500 mt-1">
+                          {operator.successfulCalls} exitosas
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -2052,15 +2071,15 @@ const TeleasistenciaApp = () => {
                           <div className="w-16 bg-gray-200 rounded-full h-2 mr-2">
                             <div 
                               className={`h-2 rounded-full ${
-                                parseFloat(operatorSuccessRate) >= 70 ? 'bg-green-500' : 
-                                parseFloat(operatorSuccessRate) >= 50 ? 'bg-yellow-500' : 'bg-red-500'
+                                coverageRate >= 70 ? 'bg-green-500' : 
+                                coverageRate >= 50 ? 'bg-yellow-500' : 'bg-red-500'
                               }`}
-                              style={{ width: `${Math.min(parseFloat(operatorSuccessRate), 100)}%` }}
+                              style={{ width: `${Math.min(coverageRate, 100)}%` }}
                             ></div>
                           </div>
                           <span className="text-xs text-gray-500">
-                            {parseFloat(operatorSuccessRate) >= 70 ? '🎯 Excelente' : 
-                             parseFloat(operatorSuccessRate) >= 50 ? '⚠️ Regular' : '📉 Revisar'}
+                            {coverageRate >= 70 ? '🎯 Excelente' : 
+                             coverageRate >= 50 ? '⚠️ Regular' : '📉 Revisar'}
                           </span>
                         </div>
                       </td>

@@ -268,18 +268,27 @@ export const usePermissions = () => {
       canViewSeguimientos,
       canViewDashboard,
       userRole: memoizedUserProfile?.role,
+      isSuper,
       visibleModulesCount: visibleModules.length,
       firstModule: visibleModules[0]?.id
     });
 
+    // Super Admin y Admin siempre cargan en Dashboard
+    if (isSuper || memoizedUserProfile?.role === 'admin') {
+      return 'dashboard';
+    }
+
+    // Teleoperadora carga en Seguimientos (su módulo principal)
     if (canViewSeguimientos && memoizedUserProfile?.role === 'teleoperadora') {
       return 'seguimientos';
     }
+
+    // Fallback: Dashboard si tiene permiso, o primer módulo visible
     if (canViewDashboard) {
       return 'dashboard';
     }
     return visibleModules[0]?.id || 'dashboard';
-  }, [canViewSeguimientos, canViewDashboard, memoizedUserProfile?.role, visibleModules]);
+  }, [canViewSeguimientos, canViewDashboard, memoizedUserProfile?.role, isSuper, visibleModules]);
 
   return {
     // Usuario y perfil

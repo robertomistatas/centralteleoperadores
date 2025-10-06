@@ -296,13 +296,29 @@ const useCallStore = create(
           const operatorNames = [...new Set(Array.from(phoneToOperator.values()))];
           const operatorMetrics = {};
           
+          // NUEVO: Calcular total de beneficiarios asignados por operadora
+          const beneficiariesByOperator = {};
+          operatorAssignments.forEach(assignment => {
+            const operatorName = assignment.operator || assignment.operatorName || 'Sin Asignar';
+            if (!beneficiariesByOperator[operatorName]) {
+              beneficiariesByOperator[operatorName] = new Set();
+            }
+            // Agregar identificador único del beneficiario
+            const beneficiaryId = assignment.id || assignment.beneficiarioId || assignment.nombre || assignment.name;
+            if (beneficiaryId) {
+              beneficiariesByOperator[operatorName].add(beneficiaryId);
+            }
+          });
+
           operatorNames.forEach(operatorName => {
             operatorMetrics[operatorName] = {
               operatorName,
               totalCalls: 0,
               successfulCalls: 0,
               failedCalls: 0,
-              totalDuration: 0
+              totalDuration: 0,
+              contactedBeneficiaries: new Set(), // NUEVO: Beneficiarios únicos contactados
+              assignedBeneficiaries: beneficiariesByOperator[operatorName]?.size || 0 // NUEVO: Total asignados
             };
           });
 
@@ -335,6 +351,9 @@ const useCallStore = create(
                   
                   if (isSuccessful) {
                     metrics.successfulCalls++;
+                    // NUEVO: Agregar beneficiario a la lista de contactados
+                    const beneficiaryId = call.beneficiarioId || call.beneficiario || call.nombre || call.name || phoneKey;
+                    metrics.contactedBeneficiaries.add(beneficiaryId);
                   } else {
                     metrics.failedCalls++;
                   }
@@ -354,9 +373,15 @@ const useCallStore = create(
               averageDuration: metrics.totalCalls > 0 ? 
                 Math.round(metrics.totalDuration / metrics.totalCalls) : 0,
               successRate: metrics.totalCalls > 0 ? 
-                Math.round((metrics.successfulCalls / metrics.totalCalls) * 100) : 0
+                Math.round((metrics.successfulCalls / metrics.totalCalls) * 100) : 0,
+              // NUEVAS MÉTRICAS: Cobertura de beneficiarios
+              assignedBeneficiaries: metrics.assignedBeneficiaries,
+              contactedBeneficiaries: metrics.contactedBeneficiaries.size,
+              coverageRate: metrics.assignedBeneficiaries > 0 ?
+                Math.round((metrics.contactedBeneficiaries.size / metrics.assignedBeneficiaries) * 100) : 0,
+              pendingBeneficiaries: metrics.assignedBeneficiaries - metrics.contactedBeneficiaries.size
             }))
-            .sort((a, b) => b.totalCalls - a.totalCalls);
+            .sort((a, b) => b.coverageRate - a.coverageRate); // Ordenar por cobertura en lugar de llamadas
 
           return result;
 
