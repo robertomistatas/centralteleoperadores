@@ -28,6 +28,7 @@ const useCallStore = create(
       loadingMessage: '',
       lastUpdated: null,
       dataSource: null,
+      dataDateRange: null, // { minDate, maxDate } del Excel
       filters: {
         dateRange: null,
         operator: null,
@@ -43,10 +44,28 @@ const useCallStore = create(
       // Acciones principales para auditoría
       setCallData: (data, source = 'excel') => {
         const timestamp = new Date().toISOString();
+        
+        // Calcular rango de fechas real del Excel
+        let dataDateRange = null;
+        if (data && data.length > 0) {
+          const dates = data
+            .map(call => call.fecha || call.date)
+            .filter(date => date)
+            .map(date => new Date(date))
+            .filter(date => !isNaN(date.getTime()));
+          
+          if (dates.length > 0) {
+            const minDate = new Date(Math.min(...dates));
+            const maxDate = new Date(Math.max(...dates));
+            dataDateRange = { minDate, maxDate };
+          }
+        }
+        
         set({
           callData: data,
           dataSource: source,
           lastUpdated: timestamp,
+          dataDateRange,
           isLoading: false,
           loadingStage: 'complete',
           loadingMessage: `${data.length} llamadas cargadas exitosamente`
@@ -209,6 +228,7 @@ const useCallStore = create(
             protocolCompliance: 0
           },
           lastUpdated: null,
+          dataDateRange: null,
           dataSource: null,
           isLoading: false,
           loadingStage: null,

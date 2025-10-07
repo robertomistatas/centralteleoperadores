@@ -10,6 +10,7 @@ function AuditDemo() {
     isLoading,
     lastUpdated,
     dataSource,
+    dataDateRange,
     clearData,
     hasData,
     getSuccessRate,
@@ -26,6 +27,11 @@ function AuditDemo() {
 
   // Estado para controlar la exportación de PDFs
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [selectedDateRange, setSelectedDateRange] = useState({
+    startDate: '',
+    endDate: ''
+  });
 
   const formatDuration = (seconds) => {
     if (!seconds || isNaN(seconds)) return '0:00';
@@ -342,7 +348,19 @@ function AuditDemo() {
     ? (totalMetrics.totalCalls / totalMetrics.totalContactedBeneficiaries).toFixed(2)
     : 0;
 
-  // Función para generar PDF
+  // Función para abrir el DatePicker antes de generar el PDF
+  const handleGeneratePDFClick = () => {
+    // Validar que hay datos
+    if (!operatorCallMetrics || operatorCallMetrics.length === 0) {
+      alert('⚠️ No hay datos disponibles para generar el reporte PDF.');
+      return;
+    }
+    
+    // Mostrar el modal del DatePicker
+    setShowDatePicker(true);
+  };
+
+  // Función para generar PDF con las fechas seleccionadas
   const generatePDFReport = async () => {
     setIsGeneratingPDF(true);
     
@@ -390,7 +408,7 @@ function AuditDemo() {
       doc.setTextColor(255, 255, 255);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(20);
-      doc.text('CENTRO DE TELEASISTENCIA', pageWidth / 2, 15, { align: 'center' });
+      doc.text('CENTRAL DE TELEASISTENCIA', pageWidth / 2, 15, { align: 'center' });
       
       doc.setFontSize(12);
       doc.setFont('helvetica', 'normal');
@@ -411,6 +429,38 @@ function AuditDemo() {
       
       doc.setFontSize(9);
       doc.text(`Generado el ${dateStr} a las ${timeStr}`, pageWidth / 2, 33, { align: 'center' });
+      
+      // 📅 USAR FECHAS SELECCIONADAS MANUALMENTE POR EL USUARIO
+      let dateRangeText = '';
+      
+      if (selectedDateRange.startDate && selectedDateRange.endDate) {
+        // Usar las fechas seleccionadas por el usuario en el DatePicker
+        const startDate = new Date(selectedDateRange.startDate);
+        const endDate = new Date(selectedDateRange.endDate);
+        
+        const startDateStr = startDate.toLocaleDateString('es-CL', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        });
+        const endDateStr = endDate.toLocaleDateString('es-CL', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        });
+        
+        dateRangeText = `Análisis realizado con datos del ${startDateStr} al ${endDateStr}`;
+      } else {
+        // Fallback si no se seleccionaron fechas
+        dateRangeText = 'Análisis realizado (rango de fechas no especificado)';
+      }
+      
+      // Mostrar el rango de fechas en BLANCO para mejor visibilidad sobre el fondo azul
+      doc.setFontSize(9);
+      doc.setTextColor(255, 255, 255); // BLANCO para destacar sobre fondo azul
+      doc.setFont('helvetica', 'bold');
+      doc.text(dateRangeText, pageWidth / 2, 38, { align: 'center' });
+      doc.setFont('helvetica', 'normal'); // Restaurar fuente normal
       
       let yPos = 50;
       
@@ -469,40 +519,14 @@ function AuditDemo() {
       
       // Fila 3
       doc.setFont('helvetica', 'bold');
-      doc.text('Llamadas Exitosas:', leftColumn, yPos);
+      doc.text('Minutos Totales Efectivos:', leftColumn, yPos);
       doc.setFont('helvetica', 'normal');
-      doc.setTextColor(...colors.success);
-      doc.text(`${totalMetrics.totalSuccessfulCalls.toLocaleString()} (${Math.round((totalMetrics.totalSuccessfulCalls / totalMetrics.totalCalls) * 100)}%)`, leftColumn + 55, yPos);
-      doc.setTextColor(...colors.secondary);
+      doc.text(`${totalMetrics.totalEffectiveMinutes.toLocaleString()} min (${(totalMetrics.totalEffectiveMinutes / 60).toFixed(1)} hrs)`, leftColumn + 55, yPos);
       
       doc.setFont('helvetica', 'bold');
-      doc.text('Llamadas Fallidas:', rightColumn, yPos);
+      doc.text('Promedio/Llamada Exitosa:', rightColumn, yPos);
       doc.setFont('helvetica', 'normal');
-      doc.setTextColor(...colors.danger);
-      doc.text(`${totalMetrics.totalFailedCalls.toLocaleString()} (${Math.round((totalMetrics.totalFailedCalls / totalMetrics.totalCalls) * 100)}%)`, rightColumn + 45, yPos);
-      doc.setTextColor(...colors.secondary);
-      yPos += lineHeight;
-      
-      // Fila 4
-      doc.setFont('helvetica', 'bold');
-      doc.text('Tasa de Éxito General:', leftColumn, yPos);
-      doc.setFont('helvetica', 'normal');
-      const successColor = globalSuccessRate >= 60 ? colors.success : colors.danger;
-      doc.setTextColor(...successColor);
-      doc.text(`${globalSuccessRate}%`, leftColumn + 55, yPos);
-      doc.setTextColor(...colors.secondary);
-      
-      doc.setFont('helvetica', 'bold');
-      doc.text('Minutos Totales Efectivos:', rightColumn, yPos);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`${totalMetrics.totalEffectiveMinutes.toLocaleString()} min (${(totalMetrics.totalEffectiveMinutes / 60).toFixed(1)} hrs)`, rightColumn + 60, yPos);
-      yPos += lineHeight;
-      
-      // Fila 5
-      doc.setFont('helvetica', 'bold');
-      doc.text('Promedio/Llamada Exitosa:', leftColumn, yPos);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`${averageMinutesPerSuccessfulCall} min`, leftColumn + 55, yPos);
+      doc.text(`${averageMinutesPerSuccessfulCall} min`, rightColumn + 60, yPos);
       yPos += 12;
       
       // ═══════════════════════════════════════════════════════════
@@ -573,39 +597,44 @@ function AuditDemo() {
       doc.line(margin, yPos, pageWidth - margin, yPos);
       yPos += 5;
       
-      // Preparar datos de la tabla
+      // Preparar datos de la tabla con el nuevo orden solicitado por gerencia
       console.log('📊 [AUDIT] Preparando datos para tabla...');
-      const tableData = operatorCallMetrics.map((operator) => [
-        operator.operatorName,
-        operator.totalCalls.toString(),
-        operator.assignedBeneficiaries.toString(),
-        operator.contactedBeneficiaries.toString(),
-        operator.uncontactedBeneficiaries.toString(),
-        operator.successfulCalls.toString(),
-        operator.failedCalls.toString(),
-        `${operator.successRate}%`,
-        `${operator.totalEffectiveMinutes} min`,
-        `${operator.averageMinutesPerCall} min`,
-        operator.averageCallsPerBeneficiary.toString()
-      ]);
+      const tableData = operatorCallMetrics.map((operator) => {
+        // Calcular % Completado: (contactados / asignados) * 100
+        const completionRate = operator.assignedBeneficiaries > 0 
+          ? Math.round((operator.contactedBeneficiaries / operator.assignedBeneficiaries) * 100) 
+          : 0;
+        
+        return [
+          operator.operatorName,                              // 1. Teleoperadora
+          operator.assignedBeneficiaries.toString(),          // 2. Asignados
+          operator.contactedBeneficiaries.toString(),         // 3. Contactados
+          `${completionRate}%`,                               // 4. % Completado
+          operator.totalCalls.toString(),                     // 5. Total Llamadas
+          operator.successfulCalls.toString(),                // 6. Exitosas
+          `${operator.successRate}%`,                         // 7. Tasa Éxito
+          `${operator.totalEffectiveMinutes} min`,            // 8. Min. Efectivos
+          `${operator.averageMinutesPerCall} min`,            // 9. Minutos Llamada
+          operator.averageCallsPerBeneficiary.toString()      // 10. Llamada s/ Benef.
+        ];
+      });
       
       console.log('📋 [AUDIT] Filas de datos en tabla:', tableData.length);
       
-      // Tabla profesional con autoTable
+      // Tabla profesional con autoTable - Nueva configuración
       autoTable(doc, {
         startY: yPos,
         head: [[
-          'Teleoperadora',
-          'Total\nLlamadas',
-          'Asignados',
-          'Contactados',
-          'Sin\nContactar',
-          'Exitosas',
-          'Fallidas',
-          'Tasa\nÉxito',
-          'Min.\nEfectivos',
-          'Min/\nLlamada',
-          'Llamadas/\nBenef.'
+          'Teleoperadora',      // 1
+          'Asignados',          // 2
+          'Contactados',        // 3
+          '% Completado',       // 4
+          'Total\nLlamadas',    // 5
+          'Exitosas',           // 6
+          'Tasa\nÉxito',        // 7
+          'Min.\nEfectivos',    // 8
+          'Min/\nLlamada',      // 9
+          'Llamadas/\nBenef.'   // 10
         ]],
         body: tableData,
         theme: 'grid',
@@ -631,17 +660,46 @@ function AuditDemo() {
           fillColor: colors.light
         },
         columnStyles: {
-          0: { halign: 'left', cellWidth: 35, fontStyle: 'bold' },
-          1: { cellWidth: 15 },
-          2: { cellWidth: 15 },
-          3: { cellWidth: 15 },
-          4: { cellWidth: 15 },
-          5: { cellWidth: 15 },
-          6: { cellWidth: 15 },
-          7: { cellWidth: 12 },
-          8: { cellWidth: 15 },
-          9: { cellWidth: 12 },
-          10: { cellWidth: 15 }
+          0: { halign: 'left', cellWidth: 35, fontStyle: 'bold' },  // Teleoperadora
+          1: { cellWidth: 18 },  // Asignados
+          2: { cellWidth: 18 },  // Contactados
+          3: { cellWidth: 18 },  // % Completado
+          4: { cellWidth: 16 },  // Total Llamadas
+          5: { cellWidth: 15 },  // Exitosas
+          6: { cellWidth: 15 },  // Tasa Éxito
+          7: { cellWidth: 16 },  // Min. Efectivos
+          8: { cellWidth: 15 },  // Min/Llamada
+          9: { cellWidth: 18 }   // Llamadas/Benef.
+        },
+        // Hook para personalizar el color de los headers en verde (Asignados, Contactados, % Completado)
+        didDrawCell: (data) => {
+          // Pintar en verde las columnas: Asignados (1), Contactados (2) y % Completado (3)
+          if (data.section === 'head' && (data.column.index === 1 || data.column.index === 2 || data.column.index === 3)) {
+            // Fondo verde
+            doc.setFillColor(34, 197, 94); // Verde (#22c55e)
+            doc.rect(data.cell.x, data.cell.y, data.cell.width, data.cell.height, 'F');
+            
+            // Bordes BLANCOS consistentes con el resto de la tabla
+            doc.setDrawColor(255, 255, 255); // Blanco (igual que lineColor del headStyles)
+            doc.setLineWidth(0.1); // Mismo grosor que la tabla
+            doc.rect(data.cell.x, data.cell.y, data.cell.width, data.cell.height, 'S');
+            
+            // Texto blanco y bold
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(8);
+            doc.setFont('helvetica', 'bold');
+            
+            // Determinar el texto según la columna
+            let headerText = '';
+            if (data.column.index === 1) headerText = 'Asignados';
+            else if (data.column.index === 2) headerText = 'Contactados';
+            else if (data.column.index === 3) headerText = '% Completado';
+            
+            doc.text(headerText, data.cell.x + data.cell.width / 2, data.cell.y + data.cell.height / 2, {
+              align: 'center',
+              baseline: 'middle'
+            });
+          }
         },
         margin: { left: margin, right: margin }
       });
@@ -669,7 +727,7 @@ function AuditDemo() {
         doc.text('Documento Confidencial', margin, pageHeight - 10);
         
         // Centro: Nombre de la empresa
-        doc.text('Centro de Teleasistencia', pageWidth / 2, pageHeight - 10, { align: 'center' });
+        doc.text('Central de Teleasistencia', pageWidth / 2, pageHeight - 10, { align: 'center' });
         
         // Derecha: Número de página
         doc.text(`Página ${i} de ${pageCount}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
@@ -753,7 +811,7 @@ function AuditDemo() {
               Exportar Excel
             </button>
             <button
-              onClick={generatePDFReport}
+              onClick={handleGeneratePDFClick}
               disabled={isGeneratingPDF}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
             >
@@ -907,6 +965,68 @@ function AuditDemo() {
           </div>
         </div>
       </div>
+
+      {/* Modal DatePicker para seleccionar rango de fechas */}
+      {showDatePicker && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-xl font-bold text-gray-900 mb-4">
+              📅 Seleccionar Rango de Fechas
+            </h3>
+            <p className="text-sm text-gray-600 mb-6">
+              Selecciona el período de análisis que se mostrará en el reporte PDF
+            </p>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Fecha de Inicio
+                </label>
+                <input
+                  type="date"
+                  value={selectedDateRange.startDate}
+                  onChange={(e) => setSelectedDateRange(prev => ({ ...prev, startDate: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Fecha de Fin
+                </label>
+                <input
+                  type="date"
+                  value={selectedDateRange.endDate}
+                  onChange={(e) => setSelectedDateRange(prev => ({ ...prev, endDate: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+            </div>
+            
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowDatePicker(false)}
+                className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  if (!selectedDateRange.startDate || !selectedDateRange.endDate) {
+                    alert('⚠️ Por favor selecciona ambas fechas');
+                    return;
+                  }
+                  setShowDatePicker(false);
+                  generatePDFReport();
+                }}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Generar PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
