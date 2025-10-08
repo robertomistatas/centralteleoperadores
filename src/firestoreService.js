@@ -128,6 +128,45 @@ export const operatorService = {
     }
   },
 
+  // 🆕 Obtener operadores por email (útil para teleoperadoras)
+  async getByEmail(email) {
+    const currentUserId = getCurrentUserId();
+    if (permissionErrorsByUser.has(currentUserId)) {
+      return [];
+    }
+
+    try {
+      const normalizedEmail = email?.toLowerCase().trim();
+      if (!normalizedEmail) {
+        console.warn('⚠️ operatorService.getByEmail llamado sin email válido');
+        return [];
+      }
+
+      console.log('🔍 Buscando operador por email:', normalizedEmail);
+      const q = query(
+        collection(db, COLLECTIONS.OPERATORS),
+        where('email', '==', normalizedEmail)
+      );
+      const querySnapshot = await getDocs(q);
+
+      const operators = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      if (operators.length === 0) {
+        console.warn('⚠️ No se encontraron operadores con el email:', normalizedEmail);
+      } else {
+        console.log('✅ Operadores encontrados por email:', operators.length);
+      }
+
+      return operators;
+    } catch (error) {
+      const result = handleFirestoreError(error, 'obtener operadores por email');
+      return result || [];
+    }
+  },
+
   // Actualizar operador
   async update(operatorId, data) {
     try {
@@ -300,6 +339,59 @@ export const assignmentService = {
       console.error('❌ Error obteniendo todas las asignaciones:', error);
       const result = handleFirestoreError(error, 'obtener todas las asignaciones');
       return result || []; // Retornar array vacío si hay error de permisos
+    }
+  },
+
+  // 🆕 Obtener asignaciones agrupadas por operatorId (independiente del userId dueño)
+  async getAssignmentsByOperatorIds(operatorIds = []) {
+    const currentUserId = getCurrentUserId();
+    if (permissionErrorsByUser.has(currentUserId)) {
+      return {};
+    }
+
+    if (!Array.isArray(operatorIds) || operatorIds.length === 0) {
+      return {};
+    }
+
+    const assignmentsByOperator = {};
+
+    // Firestore "in" soporta máximo 10 elementos por consulta
+    const chunkSize = 10;
+    const chunks = [];
+    for (let i = 0; i < operatorIds.length; i += chunkSize) {
+      chunks.push(operatorIds.slice(i, i + chunkSize));
+    }
+
+    try {
+      for (const chunk of chunks) {
+        const q = query(
+          collection(db, COLLECTIONS.ASSIGNMENTS),
+          where('operatorId', 'in', chunk)
+        );
+        const querySnapshot = await getDocs(q);
+
+        querySnapshot.docs.forEach(doc => {
+          const data = doc.data();
+          const operatorId = data.operatorId;
+
+          if (!operatorId) {
+            return;
+          }
+
+          if (!assignmentsByOperator[operatorId]) {
+            assignmentsByOperator[operatorId] = [];
+          }
+
+          if (Array.isArray(data.assignments)) {
+            assignmentsByOperator[operatorId].push(...data.assignments);
+          }
+        });
+      }
+
+      return assignmentsByOperator;
+    } catch (error) {
+      const result = handleFirestoreError(error, 'obtener asignaciones por operatorId');
+      return result || {};
     }
   }
 };

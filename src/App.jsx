@@ -112,7 +112,11 @@ const TeleasistenciaApp = () => {
 
   // Estados locales (mantenemos algunos para compatibilidad durante la transición)
   // ✅ Inicializar con defaultTab o 'dashboard' como fallback
-  const [activeTab, setActiveTab] = useState(defaultTab || 'dashboard');
+  // 🔥 IMPORTANTE: No usar fallback inicial, esperar a que defaultTab esté disponible
+  const [activeTab, setActiveTab] = useState(() => {
+    // Si defaultTab ya está disponible, usarlo; si no, esperar al useEffect
+    return defaultTab || null;
+  });
   
   const [callData, setCallData] = useState([]);
   const [assignments, setAssignments] = useState([]);
@@ -363,21 +367,32 @@ const TeleasistenciaApp = () => {
     // 1. Hay un defaultTab definido
     // 2. El tab actual no es accesible para el usuario
     // 3. O el defaultTab es diferente y acabamos de cargar permisos
-    if (defaultTab) {
-      const currentTabAccessible = checkModuleAccess(activeTab);
-      
-      // Si el tab actual no es accesible, cambiar al defaultTab
-      if (!currentTabAccessible && defaultTab !== activeTab) {
-        console.log('🔄 Cambiando tab por falta de permisos:', { from: activeTab, to: defaultTab, accessible: currentTabAccessible });
-        setActiveTab(defaultTab);
-      }
-      // Si estamos en dashboard y el usuario no tiene acceso
-      else if (activeTab === 'dashboard' && !checkModuleAccess('dashboard') && defaultTab !== 'dashboard') {
-        console.log('🔄 Cambiando desde dashboard (sin acceso) a:', defaultTab);
-        setActiveTab(defaultTab);
-      }
+    // 4. O activeTab es null (primera carga)
+    if (!defaultTab) return;
+    
+    // 🔥 CRÍTICO: Si activeTab es null (primera carga), establecer el defaultTab inmediatamente
+    if (activeTab === null) {
+      console.log('🎯 Primera carga - Estableciendo tab inicial:', defaultTab);
+      setActiveTab(defaultTab);
+      return;
     }
-  }, [defaultTab, checkModuleAccess, activeTab]);
+    
+    const currentTabAccessible = checkModuleAccess(activeTab);
+    
+    // Si el tab actual no es accesible, cambiar al defaultTab
+    if (!currentTabAccessible && defaultTab !== activeTab) {
+      console.log('🔄 Cambiando tab por falta de permisos:', { from: activeTab, to: defaultTab, accessible: currentTabAccessible });
+      // Usar setTimeout para evitar warning de setState durante render
+      setTimeout(() => setActiveTab(defaultTab), 0);
+      return;
+    }
+    
+    // Si estamos en dashboard y el usuario no tiene acceso
+    if (activeTab === 'dashboard' && !checkModuleAccess('dashboard') && defaultTab !== 'dashboard') {
+      console.log('🔄 Cambiando desde dashboard (sin acceso) a:', defaultTab);
+      setTimeout(() => setActiveTab(defaultTab), 0);
+    }
+  }, [defaultTab, activeTab]); // Removido checkModuleAccess de dependencies
 
   // OPTIMIZACIÓN: Re-analizar solo cuando sea necesario con debounce
   useEffect(() => {
@@ -446,6 +461,76 @@ const TeleasistenciaApp = () => {
         userRole: userProfile?.role,
         isAdminUser: isAdminUser
       });
+
+      // Helper reutilizable para obtener el CallData global del sistema
+      const fetchSystemCallData = async () => {
+        let systemCallData = [];
+
+        const tryLoadByEmail = async (email) => {
+          if (!email) return false;
+          try {
+            console.log(`🔍 Intentando cargar callData usando el perfil de ${email}...`);
+            const { userManagementService } = await import('./services/userManagementService');
+            const profile = await userManagementService.getUserProfileByEmail(email);
+
+            if (profile && profile.id) {
+              console.log('✅ Perfil encontrado para callData:', {
+                id: profile.id,
+                email: profile.email,
+                role: profile.role
+              });
+
+              const callData = await callDataService.getCallData(profile.id);
+              const hasData = Array.isArray(callData) && callData.length > 0;
+
+              console.log('📊 Resultado callData:', {
+                length: callData?.length || 0,
+                hasData
+              });
+
+              if (hasData) {
+                systemCallData = callData;
+                console.log(`✅ CallData cargado desde ${email}:`, systemCallData.length, 'registros');
+                return true;
+              }
+            } else {
+              console.warn('⚠️ No se encontró perfil en userProfiles para:', email);
+            }
+          } catch (error) {
+            console.error(`❌ Error cargando callData desde ${email}:`, error);
+          }
+          return false;
+        };
+
+        // Estrategia 1: Super admin principal
+        await tryLoadByEmail('roberto@mistatas.com');
+
+        // Estrategia 2: Admin alternativo
+        if (systemCallData.length === 0) {
+          await tryLoadByEmail('carolina@mistatas.com');
+        }
+
+        // Estrategia 3: Documento compartido "system"
+        if (systemCallData.length === 0) {
+          console.log('🔍 Intentando cargar callData desde documento "system"...');
+          try {
+            const systemDoc = await callDataService.getCallData('system');
+            if (systemDoc && systemDoc.length > 0) {
+              systemCallData = systemDoc;
+              console.log('✅ CallData del sistema cargado:', systemCallData.length, 'registros');
+            }
+          } catch (error) {
+            console.warn('⚠️ No se pudo cargar callData del sistema:', error.message);
+          }
+        }
+
+        if (systemCallData.length === 0) {
+          console.warn('⚠️ No se encontró callData del sistema. Las métricas pueden verse limitadas.');
+          console.warn('💡 Solución: El super admin debe cargar el Excel de seguimientos desde el Dashboard.');
+        }
+
+        return systemCallData;
+      };
       
       if (isAdminUser) {
         console.log('👑 Admin detectado - Cargando TODOS los datos del sistema');
@@ -468,7 +553,8 @@ const TeleasistenciaApp = () => {
         });
         
         userAssignments = groupedAssignments;
-        userCallData = [];
+        userCallData = await fetchSystemCallData();
+        console.log('📞 CallData disponible para admin:', userCallData?.length || 0);
         
         console.log('👑 Admin - Datos del sistema cargados:', {
           operadores: userOperators?.length || 0,
@@ -477,93 +563,36 @@ const TeleasistenciaApp = () => {
         });
       } else {
         console.log('👤 Teleoperadora detectada - Cargando datos del usuario + callData del sistema');
-        
-        // 🔥 CORRECCIÓN CRÍTICA: Teleoperadoras necesitan acceso al Excel completo del sistema
-        // para poder ver el historial de seguimientos de sus beneficiarios asignados
-        // El Excel está guardado en el documento callData del super admin
-        
-        // Intentar cargar callData del sistema (múltiples fuentes posibles)
-        let systemCallData = [];
-        
-        // Estrategia 1: Intentar cargar del super admin (roberto@mistatas.com)
-        try {
-          console.log('🔍 Estrategia 1: Buscando perfil del super admin...');
-          const { userManagementService } = await import('./services/userManagementService');
-          const superAdminProfile = await userManagementService.getUserProfileByEmail('roberto@mistatas.com');
-          
-          if (superAdminProfile && superAdminProfile.id) {
-            console.log('✅ Perfil del super admin encontrado:', {
-              id: superAdminProfile.id,
-              email: superAdminProfile.email,
-              role: superAdminProfile.role
-            });
-            
-            const superAdminCallData = await callDataService.getCallData(superAdminProfile.id);
-            console.log('📊 CallData obtenido del super admin:', {
-              length: superAdminCallData?.length || 0,
-              hasData: !!(superAdminCallData && superAdminCallData.length > 0)
-            });
-            
-            if (superAdminCallData && superAdminCallData.length > 0) {
-              systemCallData = superAdminCallData;
-              console.log('✅ CallData del super admin cargado:', systemCallData.length, 'registros');
-            }
-          } else {
-            console.warn('⚠️ No se encontró perfil del super admin en userProfiles');
-          }
-        } catch (error) {
-          console.error('❌ Error cargando callData del super admin:', error);
-        }
-        
-        // Estrategia 2: Intentar con carolina@mistatas.com (admin alternativo)
-        if (systemCallData.length === 0) {
-          try {
-            console.log('🔍 Estrategia 2: Intentando con admin alternativo (carolina@mistatas.com)...');
-            const { userManagementService } = await import('./services/userManagementService');
-            const carolinaProfile = await userManagementService.getUserProfileByEmail('carolina@mistatas.com');
-            
-            if (carolinaProfile && carolinaProfile.id) {
-              console.log('✅ Perfil de Carolina encontrado:', carolinaProfile.id);
-              const carolinaCallData = await callDataService.getCallData(carolinaProfile.id);
-              
-              if (carolinaCallData && carolinaCallData.length > 0) {
-                systemCallData = carolinaCallData;
-                console.log('✅ CallData de Carolina cargado:', systemCallData.length, 'registros');
-              }
-            }
-          } catch (error) {
-            console.warn('⚠️ No se pudo cargar callData de Carolina:', error.message);
-          }
-        }
-        
-        // Estrategia 3: Buscar en documento 'system' compartido
-        if (systemCallData.length === 0) {
-          console.log('🔍 Estrategia 3: Buscando callData en documento del sistema...');
-          try {
-            const systemDoc = await callDataService.getCallData('system');
-            if (systemDoc && systemDoc.length > 0) {
-              systemCallData = systemDoc;
-              console.log('✅ CallData del sistema cargado:', systemCallData.length, 'registros');
-            }
-          } catch (error) {
-            console.warn('⚠️ No se pudo cargar callData del sistema:', error.message);
-          }
-        }
-        
-        // Si aún no hay callData, listar todos los documentos disponibles para debugging
-        if (systemCallData.length === 0) {
-          console.warn('⚠️ No se encontró callData del sistema. Esto afectará las métricas del dashboard.');
-          console.warn('💡 Solución: El super admin debe cargar el Excel de seguimientos desde el Dashboard');
-        }
-        
+        const systemCallData = await fetchSystemCallData();
+
         // Cargar datos específicos de la teleoperadora
         const [specificOperators, specificAssignments] = await Promise.all([
           operatorService.getByUser(user.uid),
           assignmentService.getAllUserAssignments(user.uid)
         ]);
-        
-        userOperators = specificOperators;
-        userAssignments = specificAssignments;
+
+        let resolvedOperators = specificOperators;
+
+        if (!resolvedOperators || resolvedOperators.length === 0) {
+          console.warn('⚠️ No se encontraron operadores asociados al userId. Intentando buscar por email...');
+          resolvedOperators = await operatorService.getByEmail(userProfile.email);
+        }
+
+        let resolvedAssignments = specificAssignments;
+
+        if ((!resolvedAssignments || Object.keys(resolvedAssignments).length === 0) && resolvedOperators?.length) {
+          const operatorIds = resolvedOperators.map(op => op.id).filter(Boolean);
+          if (operatorIds.length > 0) {
+            console.warn('⚠️ No se encontraron asignaciones por userId. Buscando por operatorId...', operatorIds);
+            const assignmentsByOperator = await assignmentService.getAssignmentsByOperatorIds(operatorIds);
+            if (assignmentsByOperator && Object.keys(assignmentsByOperator).length > 0) {
+              resolvedAssignments = assignmentsByOperator;
+            }
+          }
+        }
+
+        userOperators = resolvedOperators;
+        userAssignments = resolvedAssignments;
         userCallData = systemCallData; // 🔥 Usar callData del sistema completo
         
         console.log('👤 Teleoperadora - Datos cargados:', {
@@ -592,7 +621,13 @@ const TeleasistenciaApp = () => {
           console.log('📊 Cargando datos en Zustand store optimizado...');
           setZustandCallData(userCallData, 'firebase'); // Esto ejecuta el análisis optimizado automáticamente
         } else {
-          console.log('📝 No hay datos de llamadas, inicializando métricas por defecto...');
+          console.warn('⚠️ No hay datos de llamadas en Firebase');
+          console.log('💡 SOLUCIÓN: El super admin debe cargar el Excel de seguimientos:');
+          console.log('   1. Ve al Dashboard');
+          console.log('   2. Sección "Carga de Datos Excel"');
+          console.log('   3. Selecciona el archivo Excel de seguimientos');
+          console.log('   4. Las métricas se actualizarán automáticamente');
+          console.log('📝 Mientras tanto, usando datos de ejemplo...');
           generateSampleData();
         }
         
@@ -625,6 +660,7 @@ const TeleasistenciaApp = () => {
           allAssignments.push({
             id: assignment.id,
             operator: operator.name,
+            operatorEmail: operator.email || '', // ✅ Agregar email del operador
             beneficiary: assignment.beneficiary,
             phone: assignment.primaryPhone,
             commune: assignment.commune
@@ -938,6 +974,7 @@ const TeleasistenciaApp = () => {
         id: `${operatorId}-${index}`,
         operatorId: operatorId,
         operatorName: operator.name,
+        operatorEmail: operator.email || '', // ✅ Agregar email del operador
         beneficiary: row[0] || '',
         phones: phones,
         primaryPhone: phones[0] || '',
@@ -959,6 +996,7 @@ const TeleasistenciaApp = () => {
       const newGeneralAssignments = processedData.map(item => ({
         id: item.id,
         operator: item.operatorName,
+        operatorEmail: item.operatorEmail, // ✅ Incluir email
         beneficiary: item.beneficiary,
         phone: item.primaryPhone,
         commune: item.commune
@@ -3165,6 +3203,15 @@ const TeleasistenciaApp = () => {
       {/* Sistema de Notificaciones Toast */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       
+      {/* 🔥 Loading screen mientras se determina el tab inicial */}
+      {activeTab === null ? (
+        <div className="flex h-screen bg-gray-100 items-center justify-center">
+          <div className="text-center">
+            <div className="w-12 h-12 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <p className="text-gray-600">Cargando aplicación...</p>
+          </div>
+        </div>
+      ) : (
       <div className="flex h-screen bg-gray-100">
         <Sidebar />
         <div className="flex-1 overflow-auto">
@@ -3258,6 +3305,7 @@ const TeleasistenciaApp = () => {
         </div>
       </div>
     </div>
+      )}
     </>
   );
 };
