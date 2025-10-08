@@ -262,12 +262,58 @@ const useAppStore = create(
     }),
     {
       name: 'app-storage',
-      storage: createJSONStorage(() => localStorage),
+      // ✅ Storage personalizado con manejo de errores QuotaExceeded
+      storage: {
+        getItem: (name) => {
+          try {
+            const value = localStorage.getItem(name);
+            return value ? JSON.parse(value) : null;
+          } catch (error) {
+            console.error('❌ Error leyendo app-storage:', error);
+            return null;
+          }
+        },
+        setItem: (name, value) => {
+          try {
+            localStorage.setItem(name, JSON.stringify(value));
+          } catch (error) {
+            if (error.name === 'QuotaExceededError') {
+              console.warn('⚠️ LocalStorage lleno en app-storage. NO guardando datos.');
+              // NO intentar guardar nada - estos datos se cargan desde Firebase
+              console.log('💡 Los datos de operadores/asignaciones se cargarán desde Firebase al iniciar');
+            } else {
+              console.error('❌ Error guardando app-storage:', error);
+            }
+          }
+        },
+        removeItem: (name) => {
+          try {
+            localStorage.removeItem(name);
+          } catch (error) {
+            console.error('❌ Error eliminando app-storage:', error);
+          }
+        }
+      },
       partialize: (state) => ({
-        operators: state.operators,
-        operatorAssignments: state.operatorAssignments,
-        settings: state.settings
-      })
+        // ✅ PERSISTENCIA ESTRATÉGICA: Guardar operators/assignments para evitar recargas
+        // Aunque sean 804 asignaciones, es preferible a perder datos en cada navegación
+        settings: state.settings,
+        operators: state.operators,  // ✅ PERSISTIR para mantener entre navegaciones
+        operatorAssignments: state.operatorAssignments  // ✅ PERSISTIR para mantener entre navegaciones
+      }),
+      version: 2, // ✅ INCREMENTAR para forzar migración y limpiar caché antiguo
+      migrate: (persistedState, version) => {
+        // Función de migración: limpiar versión 1 (sin operators/assignments)
+        if (version < 2) {
+          console.log('🔄 Migrando useAppStore a versión 2 - agregando operators/assignments');
+          return {
+            ...persistedState,
+            operators: persistedState.operators || [],
+            operatorAssignments: persistedState.operatorAssignments || {}
+          };
+        }
+        return persistedState;
+      }
     }
   )
 );

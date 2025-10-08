@@ -264,6 +264,12 @@ export const usePermissions = () => {
 
   // Determinar tab por defecto según permisos
   const defaultTab = useMemo(() => {
+    // 🔥 CRÍTICO: NO calcular defaultTab hasta que el perfil esté cargado
+    if (!memoizedUserProfile || !memoizedUserProfile.role) {
+      console.log('⏳ Esperando perfil de usuario para calcular defaultTab...');
+      return null; // Retornar null hasta que tengamos el rol
+    }
+    
     console.log('🔍 Determinando defaultTab:', {
       canViewSeguimientos,
       canViewDashboard,
@@ -275,20 +281,31 @@ export const usePermissions = () => {
 
     // Super Admin y Admin siempre cargan en Dashboard
     if (isSuper || memoizedUserProfile?.role === 'admin') {
+      console.log('✅ defaultTab = dashboard (Admin/Super Admin)');
       return 'dashboard';
     }
 
     // Teleoperadora carga en Seguimientos (su módulo principal)
     if (canViewSeguimientos && memoizedUserProfile?.role === 'teleoperadora') {
+      console.log('✅ defaultTab = seguimientos (Teleoperadora)');
       return 'seguimientos';
     }
 
     // Fallback: Dashboard si tiene permiso, o primer módulo visible
     if (canViewDashboard) {
+      console.log('✅ defaultTab = dashboard (fallback con permiso)');
       return 'dashboard';
     }
+    
+    // Último recurso: seguimientos si tiene permiso, sino el primer módulo
+    if (canViewSeguimientos) {
+      console.log('✅ defaultTab = seguimientos (último recurso con permiso)');
+      return 'seguimientos';
+    }
+    
+    console.log('⚠️ defaultTab = primer módulo visible:', visibleModules[0]?.id);
     return visibleModules[0]?.id || 'dashboard';
-  }, [canViewSeguimientos, canViewDashboard, memoizedUserProfile?.role, isSuper, visibleModules]);
+  }, [canViewSeguimientos, canViewDashboard, memoizedUserProfile?.role, isSuper]); // ✅ REMOVIDO visibleModules de dependencias
 
   return {
     // Usuario y perfil

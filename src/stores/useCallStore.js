@@ -126,6 +126,13 @@ const useCallStore = create(
             const date = call.fecha || call.date || new Date().toISOString().split('T')[0];
             const duration = parseInt(call.duracion || call.duration || 0);
             
+            // ✅ CORRECCIÓN: Extraer operatorEmail desde el callData original
+            const operatorEmail = call.operadorEmail || 
+                                 call.operator_email || 
+                                 call.email_operador || 
+                                 call.teleoperadora_email ||
+                                 '';
+            
             // CORRECCIÓN EXACTA: Solo considerar exitoso si es exactamente "Llamado exitoso"
             const result = call.resultado || call.result || call.estado || '';
             
@@ -138,6 +145,7 @@ const useCallStore = create(
               ...call,
               beneficiary,
               operator,
+              operatorEmail, // ✅ Preservar el email del operador desde el Excel
               phone,
               date,
               duration,
@@ -296,6 +304,20 @@ const useCallStore = create(
           const operatorNames = [...new Set(Array.from(phoneToOperator.values()))];
           const operatorMetrics = {};
           
+          // ✅ NUEVO: Mapeo de operatorName → operatorEmail y operatorInfo
+          const operatorInfo = {};
+          operatorAssignments.forEach(assignment => {
+            const operatorName = assignment.operator || assignment.operatorName || 'Sin Asignar';
+            const operatorEmail = assignment.operatorEmail || assignment.email || '';
+            
+            if (operatorName && operatorName !== 'Sin Asignar') {
+              operatorInfo[operatorName] = {
+                email: operatorEmail,
+                name: operatorName
+              };
+            }
+          });
+          
           // NUEVO: Calcular total de beneficiarios asignados por operadora
           const beneficiariesByOperator = {};
           operatorAssignments.forEach(assignment => {
@@ -313,6 +335,7 @@ const useCallStore = create(
           operatorNames.forEach(operatorName => {
             operatorMetrics[operatorName] = {
               operatorName,
+              operatorInfo: operatorInfo[operatorName] || { email: '', name: operatorName }, // ✅ Agregar info del operador
               totalCalls: 0,
               successfulCalls: 0,
               failedCalls: 0,
@@ -367,6 +390,7 @@ const useCallStore = create(
             .filter(metrics => metrics.totalCalls > 0)
             .map(metrics => ({
               operatorName: metrics.operatorName,
+              operatorInfo: metrics.operatorInfo, // ✅ AGREGADO: Info completa del operador (email, etc)
               totalCalls: metrics.totalCalls,
               successfulCalls: metrics.successfulCalls,
               failedCalls: metrics.failedCalls,
@@ -494,17 +518,24 @@ const useCallStore = create(
         let beneficiaryStatus = _beneficiaryCache;
         
         if (beneficiaryStatus.size === 0) {
+          // Crear nueva caché local (no actualizar el store aquí para evitar warning de React)
+          beneficiaryStatus = new Map();
+          
           processedData.forEach(call => {
             const beneficiary = call.beneficiario || call.beneficiary;
             // CORRECCIÓN: Usar el resultado real del call, no generar uno artificial
             const result = call.resultado || call.result || call.estado || 'Sin resultado';
             const date = call.fecha || call.date;
+            const operator = call.operator || call.operador || 'No identificado';
+            const operatorEmail = call.operatorEmail || call.operator_email || '';
             
             if (!beneficiary) return;
             
             if (!beneficiaryStatus.has(beneficiary)) {
               beneficiaryStatus.set(beneficiary, {
                 beneficiary,
+                operator, // ✅ Preservar operador
+                operatorEmail, // ✅ Preservar email del operador
                 calls: [],
                 lastResult: result,
                 lastDate: date
@@ -528,8 +559,10 @@ const useCallStore = create(
             }
           });
           
-          // Actualizar caché
-          set({ _beneficiaryCache: beneficiaryStatus });
+          // ✅ CORRECCIÓN: Actualizar caché asíncronamente para evitar warning de React
+          Promise.resolve().then(() => {
+            set({ _beneficiaryCache: beneficiaryStatus });
+          });
         }
 
         // OPTIMIZACIÓN 3: Crear Map de asignaciones para búsqueda O(1)
@@ -559,20 +592,34 @@ const useCallStore = create(
             colorClass = 'bg-red-100 text-red-800';
           }
 
-          // Obtener información de la operadora de manera optimizada
-          let operatorName = 'No Asignado';
+          // ✅ USAR OPERADOR QUE YA VIENE EN ITEM (del processedData)
+          let operatorName = item.operator || 'No Asignado';
+          let operatorEmail = item.operatorEmail || 'N/A';
           let phone = 'N/A';
           let commune = 'N/A';
           
+          // Solo usar assignment para mejorar phone y commune
           if (assignment) {
+            phone = assignment.phone || assignment.telefono || assignment.primaryPhone || assignment.numero_cliente || 'N/A';
+            commune = assignment.commune || assignment.comuna || 'N/A';
+            
+            // Si el assignment tiene mejor información del operador, usarla
+            const assignmentEmail = assignment.operatorEmail || 
+                                   assignment.email || 
+                                   assignment.operator_email;
+            if (assignmentEmail && assignmentEmail !== 'N/A') {
+              operatorEmail = assignmentEmail;
+            }
+            
             const candidateOperator = assignment.operator || 
                                     assignment.operador || 
                                     assignment.operatorName ||
                                     assignment.teleoperadora ||
                                     assignment.name;
             
-            // Validación simplificada de operador
+            // Validación simplificada de operador (solo si mejora el actual)
             if (candidateOperator && 
+                operatorName === 'No Asignado' &&
                 candidateOperator !== 'Solo HANGUP' && 
                 candidateOperator !== 'HANGUP' &&
                 candidateOperator !== 'No identificado' &&
@@ -584,14 +631,19 @@ const useCallStore = create(
                 !/^\d{1,2}[-\/]\d{1,2}[-\/]\d{4}$/.test(candidateOperator)) {
               operatorName = candidateOperator;
             }
-            
-            phone = assignment.phone || assignment.telefono || assignment.primaryPhone || assignment.numero_cliente || 'N/A';
-            commune = assignment.commune || assignment.comuna || 'N/A';
           }
+
+          // Log solo para debugging limitado (comentado en producción)
+          // console.log(`🔍 Seguimiento generado para ${item.beneficiary}:`, {
+          //   operator: operatorName,
+          //   email: operatorEmail,
+          //   hasAssignment: !!assignment
+          // });
 
           return {
             id: item.beneficiary,
             operator: operatorName,
+            operatorEmail: operatorEmail, // ✅ Ya viene del processedData
             beneficiary: item.beneficiary,
             phone: phone,
             commune: commune,
@@ -631,18 +683,77 @@ const useCallStore = create(
     }),
     {
       name: 'call-audit-storage-optimized',
-      storage: createJSONStorage(() => localStorage),
+      // ✅ Storage personalizado con manejo de errores QuotaExceeded
+      storage: {
+        getItem: (name) => {
+          try {
+            const value = localStorage.getItem(name);
+            return value ? JSON.parse(value) : null;
+          } catch (error) {
+            console.error('❌ Error leyendo de localStorage:', error);
+            return null;
+          }
+        },
+        setItem: (name, value) => {
+          try {
+            localStorage.setItem(name, JSON.stringify(value));
+          } catch (error) {
+            if (error.name === 'QuotaExceededError') {
+              console.error('❌ LocalStorage lleno. Limpiando datos antiguos...');
+              // Limpiar solo los datos de este store
+              localStorage.removeItem(name);
+              // Intentar guardar solo las métricas (sin callData)
+              try {
+                const minimalData = {
+                  state: {
+                    callMetrics: value.state.callMetrics,
+                    lastUpdated: value.state.lastUpdated,
+                    dataSource: value.state.dataSource
+                  }
+                };
+                localStorage.setItem(name, JSON.stringify(minimalData));
+                console.warn('⚠️ Guardadas solo métricas (callData omitido por falta de espacio)');
+              } catch (retryError) {
+                console.error('❌ No se pudo guardar ni siquiera las métricas:', retryError);
+              }
+            } else {
+              console.error('❌ Error guardando en localStorage:', error);
+            }
+          }
+        },
+        removeItem: (name) => {
+          try {
+            localStorage.removeItem(name);
+          } catch (error) {
+            console.error('❌ Error eliminando de localStorage:', error);
+          }
+        }
+      },
       partialize: (state) => ({
+        // ✅ OPTIMIZACIÓN: Solo persistir callData crudo (más compacto)
+        // processedData se regenera automáticamente con analyzeCallData()
         callData: state.callData,
-        processedData: state.processedData,
         callMetrics: state.callMetrics,
         lastUpdated: state.lastUpdated,
-        dataSource: state.dataSource,
-        filters: state.filters,
-        loadingStage: state.loadingStage,
-        loadingMessage: state.loadingMessage
-        // No persistir cachés (se regeneran al cargar)
-      })
+        dataSource: state.dataSource
+        // No persistir: processedData (se regenera), cachés, filters, loading states
+      }),
+      version: 1, // Versión del storage para migraciones futuras
+      migrate: (persistedState, version) => {
+        // Función de migración simple para silenciar advertencias
+        if (version === 0) {
+          // Migración de versión 0 a 1 (si es necesario)
+          return persistedState;
+        }
+        return persistedState;
+      },
+      onRehydrateStorage: () => (state) => {
+        // Después de cargar desde localStorage, regenerar processedData
+        if (state && state.callData && state.callData.length > 0) {
+          console.log('🔄 Regenerando processedData desde callData persistido...');
+          state.analyzeCallData();
+        }
+      }
     }
   )
 );

@@ -15,6 +15,7 @@ export { default as useUserManagementStore } from './useUserManagementStore';
 export { useSeguimientosStore } from './useSeguimientosStore'; // ACTUALIZADO con firestoreService
 export { useGestionesStore, GESTION_ESTADOS, ESTADO_COLORS } from './useGestionesStore';
 export { default as useMetricsStore } from './useMetricsStore'; // Mantener el existente
+export { default as useDashboardStore } from './useDashboardStore'; // ✅ Store para persistencia de dashboard
 
 // Exportar hooks combinados útiles
 export const useStores = () => ({

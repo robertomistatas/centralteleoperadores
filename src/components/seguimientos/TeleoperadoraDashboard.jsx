@@ -18,10 +18,9 @@ import {
   Download
 } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
-import { useCallStore, useAppStore, USER_ROLES } from '../../stores';
+import { useCallStore, useAppStore, useDashboardStore, USER_ROLES } from '../../stores';
 import { useSeguimientosStore } from '../../stores/useSeguimientosStore';
 import usePermissions from '../../hooks/usePermissions';
-import { useUserSync } from '../../hooks/useUserSync'; // ✅ Hook de sincronización
 import { seguimientoService } from '../../services/seguimientoService';
 import MetricCard from './MetricCard';
 import BeneficiaryCard from './BeneficiaryCard';
@@ -36,23 +35,31 @@ const TeleoperadoraDashboard = () => {
   const { user: authUser } = useAuth();
   const { user, isAdmin } = usePermissions(); // Usar usePermissions para obtener rol correcto
   const { operators, getAllAssignments, getAssignmentsByEmail } = useAppStore();
-  const { callData } = useCallStore();
+  const { callData, getOperatorMetrics } = useCallStore();
   const { 
     addSeguimiento, 
     initializeSubscription, 
     clearStore 
   } = useSeguimientosStore();
-
-  // ✅ NUEVO: Hook de sincronización global de perfil
-  const { profile: syncedProfile, isLoading: profileLoading } = useUserSync(authUser?.uid);
   
-  // Usar perfil sincronizado si está disponible, sino usar el de usePermissions
-  const currentProfile = syncedProfile || user;
+  // ✅ NUEVO: Usar store persistente para datos del dashboard
+  const {
+    beneficiarios,
+    seguimientos,
+    isLoading,
+    dataLoaded,
+    setBeneficiarios,
+    setSeguimientos,
+    setIsLoading,
+    setDataLoaded,
+    needsReload,
+    clearDashboard
+  } = useDashboardStore();
 
-  // Estados principales
-  const [beneficiarios, setBeneficiarios] = useState([]);
-  const [seguimientos, setSeguimientos] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  // ✅ SIMPLIFICADO: Usar solo el perfil de usePermissions (ya está sincronizado)
+  // NO necesitamos useUserSync aquí porque usePermissions ya maneja la sincronización
+
+  // Estados locales de UI (no necesitan persistir)
   const [selectedBeneficiary, setSelectedBeneficiary] = useState(null);
   const [showNewContactForm, setShowNewContactForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -60,34 +67,51 @@ const TeleoperadoraDashboard = () => {
   // Estados de la UI
   const [activeFilter, setActiveFilter] = useState('todos'); // todos, al-dia, pendientes, urgentes
 
-  // ✅ Usar datos sincronizados del perfil
-  const currentOperatorName = isAdmin ? 'Administrador' : (currentProfile?.displayName || currentProfile?.email || user?.displayName || user?.email);
-  const currentOperatorEmail = currentProfile?.email || user?.email || authUser?.email;
+  // ✅ Usar datos del perfil de usePermissions
+  const currentOperatorName = isAdmin ? 'Administrador' : (user?.displayName || user?.name || user?.email);
+  const currentOperatorEmail = user?.email || authUser?.email;
 
   console.log('👤 Perfil actual sincronizado:', {
     email: currentOperatorEmail,
     nombre: currentOperatorName,
-    syncedProfile: !!syncedProfile,
+    hasUser: !!user,
     isAdmin
   });
 
-  // Cargar datos iniciales - DIRECTO DESDE FIREBASE
+  // Cargar datos iniciales - CON PERSISTENCIA INTELIGENTE
   useEffect(() => {
-    if (user) {
-      console.log('📊 Usuario autenticado, cargando datos directamente desde Firebase...');
-      console.log('🔍 Rol detectado:', user.role, 'Es admin:', isAdmin);
-      
-      // Inicializar el store de seguimientos para sincronización en tiempo real
-      initializeSubscription(user.uid || authUser.uid);
-      
-      loadDashboardData();
+    if (!user) return;
+    
+    const currentEmail = user?.email || authUser?.email;
+    console.log('📊 Usuario autenticado, verificando datos...');
+    console.log('🔍 Rol detectado:', user.role, 'Es admin:', isAdmin);
+    console.log('📧 Email actual:', currentEmail);
+    
+    // Inicializar el store de seguimientos para sincronización en tiempo real
+    initializeSubscription(user.uid || authUser.uid);
+    
+    // ✅ VERIFICAR SI NECESITAMOS RECARGAR usando el store persistente
+    if (!needsReload(currentEmail)) {
+      console.log('✅ [DASHBOARD] Datos válidos en caché:', {
+        beneficiarios: beneficiarios.length,
+        seguimientos: seguimientos.length,
+        email: currentEmail
+      });
+      setIsLoading(false);
+      return; // Ya tenemos datos válidos para este usuario
     }
+    
+    // Si llegamos aquí, necesitamos cargar datos
+    console.log('📥 [DASHBOARD] Cargando datos frescos para:', currentEmail);
+    loadDashboardData();
 
-    // Cleanup al desmontar el componente
+    // ✅ NO limpiar el store al desmontar - mantener datos en caché
+    // Esto evita que las métricas se reseteen al volver al dashboard
     return () => {
-      clearStore();
+      console.log('📊 [DASHBOARD] Componente desmontado - datos PERSISTEN en store');
+      // clearDashboard(); // NO LIMPIAR - mantener datos entre navegaciones
     };
-  }, [user?.uid || authUser?.uid, initializeSubscription, clearStore, isAdmin]);
+  }, [user?.uid, authUser?.uid, initializeSubscription, isAdmin]);
 
   /**
    * Carga todos los datos necesarios para el dashboard - CONEXIÓN DIRECTA A FIREBASE + EXCEL
@@ -107,8 +131,22 @@ const TeleoperadoraDashboard = () => {
       console.log('📋 Seguimientos Firebase:', seguimientosFirebase.length);
       
       // 2. Obtener datos del Excel procesados (Historial de Seguimientos)
+      // ✅ CORRECCIÓN CRÍTICA: Esperar a que las asignaciones estén disponibles
       const { getFollowUpData } = useCallStore.getState();
-      const assignmentsToUse = getAllAssignments();
+      let assignmentsToUse = getAllAssignments();
+      
+      // Si no hay asignaciones en el store, cargarlas desde Firebase directamente
+      if (!assignmentsToUse || assignmentsToUse.length === 0) {
+        console.warn('⚠️ No hay asignaciones en el store, recargando desde Firebase...');
+        // Forzar recarga de datos del App.jsx
+        if (typeof window !== 'undefined' && window.location) {
+          // Dar tiempo para que App.jsx cargue los datos
+          await new Promise(resolve => setTimeout(resolve, 500));
+          assignmentsToUse = getAllAssignments();
+        }
+      }
+      
+      console.log('📦 Asignaciones disponibles para getFollowUpData:', assignmentsToUse.length);
       const seguimientosExcel = getFollowUpData(assignmentsToUse);
       console.log('📊 Seguimientos del Excel:', seguimientosExcel.length);
       
@@ -261,38 +299,44 @@ const TeleoperadoraDashboard = () => {
       if (!isAdmin) {
         // Para teleoperadora: filtrar seguimientos del Excel por operador
         const userEmail = user?.email?.toLowerCase().trim();
+        
+        console.log(`🔍 Filtrando seguimientos para: ${userEmail}`);
+        console.log(`📊 Total seguimientos del Excel ANTES de filtrar: ${seguimientosExcel.length}`);
+        
+        // ✅ FILTRO ESTRICTO: Solo por email del operador
+        let debugCount = 0;
         const seguimientosExcelFiltrados = seguimientosExcel.filter(seg => {
           const operatorEmail = seg.operatorEmail?.toLowerCase().trim();
-          const operatorMatch = operatorEmail === userEmail || 
-                               seg.operator?.toLowerCase().includes(user?.displayName?.toLowerCase() || '') ||
-                               seg.operator?.toLowerCase().includes('javiera') || // Temporal para Javiera
-                               seg.operator?.toLowerCase().includes('reyes');
           
-          if (operatorMatch) {
-            console.log('📞 Seguimiento del Excel para esta teleoperadora:', {
+          // Coincidencia EXACTA por email
+          const emailMatch = operatorEmail && operatorEmail === userEmail;
+          
+          // Log de debug solo para los primeros 5
+          if (emailMatch && debugCount < 5) {
+            console.log('✅ Seguimiento VÁLIDO para esta teleoperadora:', {
               beneficiario: seg.beneficiary,
-              operador: seg.operator,
-              ultimaLlamada: seg.lastCall
+              operadorEmail: operatorEmail,
+              operadorNombre: seg.operator,
+              ultimaLlamada: seg.lastCall,
+              llamadas: seg.callCount
             });
+            debugCount++;
           }
           
-          return operatorMatch;
+          return emailMatch;
         });
         
-        console.log(`🔗 Seguimientos Excel filtrados para ${user?.email}:`, seguimientosExcelFiltrados.length);
+        console.log(`🔗 Seguimientos Excel filtrados para ${userEmail}: ${seguimientosExcelFiltrados.length}`);
         
-        // Debug: mostrar muestra de datos del Excel
-        if (seguimientosExcelFiltrados.length > 0) {
-          console.log('📊 Muestra de seguimientos del Excel:', seguimientosExcelFiltrados.slice(0, 3));
-          
-          // Específico para Sergio
-          const sergioExcel = seguimientosExcelFiltrados.find(s => 
-            s.beneficiary?.toLowerCase().includes('sergio') && 
-            s.beneficiary?.toLowerCase().includes('román')
+        // Verificación de datos
+        if (seguimientosExcelFiltrados.length === 0) {
+          console.error('❌ NO se encontraron seguimientos para este email');
+          console.log('💡 Verificar que el operatorEmail en los datos del Excel sea:', userEmail);
+          console.log('📋 Muestra de emails en los datos:', 
+            seguimientosExcel.slice(0, 5).map(s => s.operatorEmail)
           );
-          if (sergioExcel) {
-            console.log('🎯 SERGIO en datos Excel:', sergioExcel);
-          }
+        } else {
+          console.log('📊 Muestra de seguimientos filtrados:', seguimientosExcelFiltrados.slice(0, 3));
         }
         
         // Convertir formato del Excel a formato compatible con Firebase
@@ -365,6 +409,34 @@ const TeleoperadoraDashboard = () => {
       console.log(`   Beneficiarios cargados: ${beneficiariosAsignados.length}`);
       console.log(`   Seguimientos totales: ${seguimientosCombinados.length}`);
       
+      // 🎯 NUEVO: Obtener métricas reales del CallStore para verificar sincronización
+      try {
+        const { getOperatorMetrics } = useCallStore.getState();
+        const allAssignments = getAllAssignments();
+        const operatorMetrics = getOperatorMetrics(allAssignments);
+        
+        const userEmail = user?.email?.toLowerCase().trim();
+        const currentMetrics = operatorMetrics.find(metric => {
+          const metricEmail = metric.operatorInfo?.email?.toLowerCase().trim();
+          return metricEmail === userEmail;
+        });
+        
+        if (currentMetrics) {
+          console.log('📊 MÉTRICAS REALES DEL CALLSTORE:');
+          console.log(`   📞 Total Llamadas: ${currentMetrics.totalCalls}`);
+          console.log(`   ✅ Llamadas Exitosas: ${currentMetrics.successfulCalls}`);
+          console.log(`   ❌ Llamadas Fallidas: ${currentMetrics.failedCalls}`);
+          console.log(`   📊 Tasa de Éxito: ${currentMetrics.successRate}%`);
+          console.log(`   👥 Asignados: ${currentMetrics.assignedBeneficiaries}`);
+          console.log(`   📞 Contactados: ${currentMetrics.contactedBeneficiaries}`);
+          console.log(`   ⏱️ Min. Efectivos: ${currentMetrics.totalEffectiveMinutes}`);
+        } else {
+          console.log('⚠️ No se encontraron métricas en CallStore para este usuario');
+        }
+      } catch (error) {
+        console.error('❌ Error verificando métricas del CallStore:', error);
+      }
+      
       const sergioEnBeneficiarios = beneficiariosAsignados.find(b => 
         b.beneficiary?.toLowerCase().includes('sergio') && 
         b.beneficiary?.toLowerCase().includes('román')
@@ -384,7 +456,9 @@ const TeleoperadoraDashboard = () => {
     } catch (error) {
       console.error('Error cargando datos del dashboard:', error);
     } finally {
+      const currentEmail = user?.email || authUser?.email;
       setIsLoading(false);
+      setDataLoaded(true, currentEmail); // ✅ Marcar datos cargados con email del usuario
     }
   };
 
@@ -521,7 +595,209 @@ const TeleoperadoraDashboard = () => {
   };
 
   /**
-   * Métricas calculadas del dashboard
+   * Métricas REALES del CallStore - Sincronizadas con Auditoría Avanzada
+   */
+  const metricasRealesCallStore = useMemo(() => {
+    try {
+      // ✅ VERIFICAR QUE NO ESTAMOS EN ESTADO DE CARGA
+      if (isLoading) {
+        console.log('⏳ [DASHBOARD] Datos en carga, esperando...');
+        return {
+          assignedBeneficiaries: 0,
+          contactedBeneficiaries: 0,
+          uncontactedBeneficiaries: 0,
+          totalCalls: 0,
+          successfulCalls: 0,
+          failedCalls: 0,
+          successRate: 0,
+          totalEffectiveMinutes: 0,
+          averageMinutesPerCall: 0,
+          averageCallsPerBeneficiary: 0,
+          hasRealData: false,
+          isLoading: true
+        };
+      }
+      
+      // ✅ VALIDACIÓN SIMPLIFICADA: Solo necesitamos beneficiarios y seguimientos
+      const hasValidBeneficiarios = beneficiarios && beneficiarios.length > 0;
+      const hasValidSeguimientos = seguimientos && seguimientos.length > 0;
+      
+      console.log('🔍 [DASHBOARD] Validación de datos necesarios:', {
+        isLoading,
+        hasValidBeneficiarios,
+        beneficiariosCount: beneficiarios?.length || 0,
+        hasValidSeguimientos,
+        seguimientosCount: seguimientos?.length || 0
+      });
+      
+      // ⚠️ Si no hay beneficiarios NI seguimientos después de cargar, esperar
+      if (!hasValidBeneficiarios && !hasValidSeguimientos) {
+        console.log('⏳ [DASHBOARD] Sin datos disponibles aún...');
+        return {
+          assignedBeneficiaries: 0,
+          contactedBeneficiaries: 0,
+          uncontactedBeneficiaries: 0,
+          totalCalls: 0,
+          successfulCalls: 0,
+          failedCalls: 0,
+          successRate: 0,
+          totalEffectiveMinutes: 0,
+          averageMinutesPerCall: 0,
+          averageCallsPerBeneficiary: 0,
+          hasRealData: false
+        };
+      }
+      
+      // ✅ Si tenemos beneficiarios, calcular métricas básicas
+      const totalBeneficiarios = beneficiarios?.length || 0;
+      const totalSeguimientos = seguimientos?.length || 0;
+      
+      console.log('📊 [DASHBOARD] Calculando métricas con:', {
+        totalBeneficiarios,
+        totalSeguimientos
+      });
+      
+      // ✅ CALCULAR MÉTRICAS DESDE SEGUIMIENTOS
+      // ✅ SOLUCIÓN: Usar getOperatorMetrics del CallStore para consistencia con panel de admin
+      const userEmail = user?.email?.toLowerCase().trim();
+      
+      // Obtener métricas reales del CallStore (mismo método que usa el panel de admin)
+      const { getOperatorMetrics } = useCallStore.getState();
+      const allAssignments = getAllAssignments();
+      const operatorMetrics = getOperatorMetrics(allAssignments);
+      
+      console.log(`🔍 Buscando métricas para: ${userEmail}`);
+      console.log(`📊 Total operadores en CallStore: ${operatorMetrics.length}`);
+      
+      // Buscar las métricas de esta teleoperadora específica por EMAIL o NOMBRE
+      const currentMetrics = operatorMetrics.find(metric => {
+        const metricEmail = metric.operatorInfo?.email?.toLowerCase().trim();
+        const operatorName = metric.operatorName?.toLowerCase().trim();
+        const userName = user?.displayName?.toLowerCase().trim();
+        
+        // Coincidencia por email (más confiable)
+        const emailMatch = metricEmail && metricEmail === userEmail;
+        
+        // Coincidencia por nombre (fallback)
+        const nameMatch = operatorName && userName && (
+          operatorName === userName ||
+          operatorName.includes(userName) ||
+          userName.includes(operatorName)
+        );
+        
+        if (emailMatch || nameMatch) {
+          console.log(`✅ Match encontrado:`, {
+            email: metricEmail,
+            nombre: operatorName,
+            matchType: emailMatch ? 'email' : 'nombre'
+          });
+        }
+        
+        return emailMatch || nameMatch;
+      });
+      
+      if (currentMetrics) {
+        console.log('📊 [DASHBOARD] Métricas REALES del CallStore:', {
+          operador: currentMetrics.operatorName,
+          asignados: currentMetrics.assignedBeneficiaries,
+          contactados: currentMetrics.contactedBeneficiaries,
+          cobertura: currentMetrics.coverageRate + '%',
+          totalLlamadas: currentMetrics.totalCalls,
+          exitosas: currentMetrics.successfulCalls,
+          fallidas: currentMetrics.failedCalls,
+          tasaExito: currentMetrics.successRate + '%'
+        });
+        
+        return {
+          assignedBeneficiaries: currentMetrics.assignedBeneficiaries,
+          contactedBeneficiaries: currentMetrics.contactedBeneficiaries,
+          uncontactedBeneficiaries: currentMetrics.pendingBeneficiaries,
+          totalCalls: currentMetrics.totalCalls,
+          successfulCalls: currentMetrics.successfulCalls,
+          failedCalls: currentMetrics.failedCalls,
+          successRate: currentMetrics.successRate,
+          coverageRate: currentMetrics.coverageRate,
+          totalEffectiveMinutes: currentMetrics.totalEffectiveMinutes,
+          averageMinutesPerCall: Math.round(currentMetrics.averageDuration / 60),
+          averageCallsPerBeneficiary: currentMetrics.assignedBeneficiaries > 0 ? 
+            Math.round((currentMetrics.totalCalls / currentMetrics.assignedBeneficiaries) * 10) / 10 : 0,
+          hasRealData: true
+        };
+      } else {
+        console.warn('⚠️ [DASHBOARD] NO se encontraron métricas en CallStore para:', {
+          userEmail,
+          userName: user?.displayName,
+          operatorsEnCallStore: operatorMetrics.map(m => m.operatorName)
+        });
+        
+        // Fallback: calcular manualmente (método antiguo)
+        console.log('📊 [DASHBOARD] Usando método de cálculo manual como fallback');
+        
+        // Calcular métricas manualmente desde seguimientos
+        let totalLlamadas = 0;
+        let llamadasExitosas = 0;
+        let beneficiariosContactados = new Set();
+        
+        seguimientos.forEach(seg => {
+          totalLlamadas++;
+          const benefId = seg.beneficiarioId || seg.beneficiario || seg.id;
+          if (benefId) {
+            beneficiariosContactados.add(String(benefId).toUpperCase());
+          }
+          if (seg.tipoResultado === 'exitoso' || 
+              seg.estado === 'exitoso' ||
+              seg.resultado === 'exitoso') {
+            llamadasExitosas++;
+          }
+        });
+        
+        const contactados = beneficiariosContactados.size;
+        const sinContactar = totalBeneficiarios - contactados;
+        const tasaExito = totalLlamadas > 0 ? Math.round((llamadasExitosas / totalLlamadas) * 100) : 0;
+        
+        console.log('📊 [DASHBOARD] Métricas calculadas manualmente (fallback):', {
+          totalBeneficiarios,
+          contactados,
+          sinContactar,
+          totalLlamadas,
+          llamadasExitosas,
+          tasaExito
+        });
+        
+        return {
+          assignedBeneficiaries: totalBeneficiarios,
+          contactedBeneficiaries: contactados,
+          uncontactedBeneficiaries: sinContactar,
+          totalCalls: totalLlamadas,
+          successfulCalls: llamadasExitosas,
+          failedCalls: totalLlamadas - llamadasExitosas,
+          successRate: tasaExito,
+          totalEffectiveMinutes: 0,
+          averageMinutesPerCall: 0,
+          averageCallsPerBeneficiary: totalBeneficiarios > 0 ? Math.round((totalLlamadas / totalBeneficiarios) * 10) / 10 : 0,
+          hasRealData: true
+        };
+      }
+    } catch (error) {
+      console.error('❌ [DASHBOARD] Error obteniendo métricas reales:', error);
+      return {
+        assignedBeneficiaries: beneficiarios.length,
+        contactedBeneficiaries: 0,
+        uncontactedBeneficiaries: beneficiarios.length,
+        totalCalls: 0,
+        successfulCalls: 0,
+        failedCalls: 0,
+        successRate: 0,
+        totalEffectiveMinutes: 0,
+        averageMinutesPerCall: 0,
+        averageCallsPerBeneficiary: 0,
+        hasRealData: false
+      };
+    }
+  }, [isLoading, beneficiarios, seguimientos, currentOperatorEmail, currentOperatorName]);
+
+  /**
+   * Métricas calculadas del dashboard basadas en estado de seguimientos
    */
   const metricas = useMemo(() => {
     const beneficiariosConEstado = beneficiarios.map(benef => ({
@@ -534,13 +810,30 @@ const TeleoperadoraDashboard = () => {
     const urgentes = beneficiariosConEstado.filter(b => b.estado === 'urgente').length;
 
     return {
-      total: beneficiarios.length,
+      // Usar métricas REALES del CallStore
+      total: metricasRealesCallStore.assignedBeneficiaries,
+      contactados: metricasRealesCallStore.contactedBeneficiaries,
+      sinContactar: metricasRealesCallStore.uncontactedBeneficiaries,
+      
+      // Métricas de seguimiento (15/30 días)
       alDia,
       pendientes,
       urgentes,
-      beneficiariosConEstado
+      
+      // Métricas de llamadas reales
+      totalLlamadas: metricasRealesCallStore.totalCalls,
+      llamadasExitosas: metricasRealesCallStore.successfulCalls,
+      llamadasFallidas: metricasRealesCallStore.failedCalls,
+      tasaExito: metricasRealesCallStore.successRate,
+      minutosEfectivos: metricasRealesCallStore.totalEffectiveMinutes,
+      
+      // Lista con estado
+      beneficiariosConEstado,
+      
+      // Flag de datos reales
+      tieneDataExcel: metricasRealesCallStore.hasRealData
     };
-  }, [beneficiarios, seguimientos]);
+  }, [beneficiarios, seguimientos, metricasRealesCallStore]);
 
   /**
    * Beneficiarios filtrados según búsqueda y filtro activo
@@ -833,7 +1126,7 @@ const TeleoperadoraDashboard = () => {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Métricas */}
+        {/* Métricas Principales - Datos Reales del Excel */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <MetricCard
             title="Total Beneficiarios"
@@ -843,20 +1136,20 @@ const TeleoperadoraDashboard = () => {
             color="blue"
           />
           <MetricCard
-            title="Al Día"
-            value={metricas.alDia}
-            subtitle="Contacto últimos 15 días"
-            percentage={metricas.total > 0 ? Math.round((metricas.alDia / metricas.total) * 100) : 0}
+            title="Contactados"
+            value={metricas.contactados}
+            subtitle="Beneficiarios con contacto"
+            percentage={metricas.total > 0 ? Math.round((metricas.contactados / metricas.total) * 100) : 0}
             icon={CheckCircle}
             color="green"
           />
           <MetricCard
-            title="Pendientes"
-            value={metricas.pendientes}
-            subtitle="16-30 días sin contacto"
-            percentage={metricas.total > 0 ? Math.round((metricas.pendientes / metricas.total) * 100) : 0}
+            title="Sin Contactar"
+            value={metricas.sinContactar}
+            subtitle="Sin contacto registrado"
+            percentage={metricas.total > 0 ? Math.round((metricas.sinContactar / metricas.total) * 100) : 0}
             icon={Clock}
-            color="yellow"
+            color="orange"
           />
           <MetricCard
             title="Urgentes"
@@ -867,6 +1160,41 @@ const TeleoperadoraDashboard = () => {
             color="red"
           />
         </div>
+
+        {/* Métricas de Llamadas - Si hay datos del Excel */}
+        {metricas.tieneDataExcel && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <MetricCard
+              title="Total Llamadas"
+              value={metricas.totalLlamadas}
+              subtitle="Llamadas registradas"
+              icon={Phone}
+              color="purple"
+            />
+            <MetricCard
+              title="Min. Efectivos"
+              value={metricas.minutosEfectivos}
+              subtitle={`${metricasRealesCallStore.averageMinutesPerCall} min/llamada`}
+              icon={Clock}
+              color="teal"
+            />
+          </div>
+        )}
+
+        {/* Alerta si NO hay datos del Excel */}
+        {!metricas.tieneDataExcel && (
+          <div className="mb-8 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="w-6 h-6 text-yellow-600" />
+              <div>
+                <p className="font-semibold text-yellow-900">Sin datos de llamadas del Excel</p>
+                <p className="text-sm text-yellow-700">
+                  Las métricas de llamadas no están disponibles. Por favor, contacta al administrador para cargar el archivo Excel con tu historial de llamadas.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Barra de búsqueda y filtros */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">

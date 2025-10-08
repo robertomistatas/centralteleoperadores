@@ -217,6 +217,14 @@ const useUserManagementStore = create(
         // Super admin tiene acceso a todo
         if (get().isSuperAdmin(user)) return true;
         
+        // ✅ GESTIONES siempre accesible para todos
+        if (module === 'gestiones') return true;
+        
+        // ✅ CALENDAR usa el mismo permiso que seguimientos
+        if (module === 'calendar') {
+          return get().hasPermission(user, 'seguimientos');
+        }
+        
         // Verificar permisos específicos
         return get().hasPermission(user, module);
       },
