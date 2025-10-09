@@ -40,10 +40,10 @@ class ErrorBoundary extends React.Component {
             Intentar nuevamente
           </button>
           <button
-            onClick={() => window.location.reload()}
+            onClick={() => window.location.href = '/'}
             className="mt-4 ml-2 bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700"
           >
-            Recargar página
+            Ir al inicio
           </button>
         </div>
       );

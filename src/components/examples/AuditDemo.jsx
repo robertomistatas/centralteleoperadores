@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useCallStore, useAppStore } from '../../stores';
+import { useUIStore } from '../../stores/useUIStore';
 import { BarChart3, FileSpreadsheet, TrendingUp, Users, Clock, Phone, User, Download, FileText, Printer } from 'lucide-react';
 
 function AuditDemo() {
@@ -24,6 +25,8 @@ function AuditDemo() {
     operatorAssignments,
     getAllAssignments
   } = useAppStore();
+
+  const { showWarning, showSuccess, showError } = useUIStore();
 
   // Estado para controlar la exportación de PDFs
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -352,7 +355,7 @@ function AuditDemo() {
   const handleGeneratePDFClick = () => {
     // Validar que hay datos
     if (!operatorCallMetrics || operatorCallMetrics.length === 0) {
-      alert('⚠️ No hay datos disponibles para generar el reporte PDF.');
+      showWarning('No hay datos disponibles para generar el reporte PDF.');
       return;
     }
     
@@ -367,7 +370,7 @@ function AuditDemo() {
     try {
       // ✅ VALIDACIÓN: Verificar que hay datos antes de generar el PDF
       if (!operatorCallMetrics || operatorCallMetrics.length === 0) {
-        alert('⚠️ No hay datos disponibles para generar el reporte PDF.');
+        showWarning('No hay datos disponibles para generar el reporte PDF.');
         console.warn('[AUDIT] No hay métricas de operadores disponibles');
         setIsGeneratingPDF(false);
         return;
@@ -741,7 +744,7 @@ function AuditDemo() {
       doc.save(fileName);
       
       console.log('✅ [AUDIT] PDF generado exitosamente:', fileName);
-      alert(`✅ PDF generado exitosamente: ${fileName}`);
+      showSuccess(`PDF generado exitosamente: ${fileName}`);
       
     } catch (error) {
       console.error('❌ [AUDIT] Error generando PDF:', error);
@@ -753,7 +756,7 @@ function AuditDemo() {
       
       // Mensaje de error más detallado
       const errorMsg = error.message || 'Error desconocido';
-      alert(`❌ Error al generar el PDF:\n\n${errorMsg}\n\nRevise la consola (F12) para más detalles.`);
+      showError(`Error al generar el PDF: ${errorMsg}. Revise la consola (F12) para más detalles.`);
     } finally {
       setIsGeneratingPDF(false);
     }
@@ -1013,7 +1016,7 @@ function AuditDemo() {
               <button
                 onClick={() => {
                   if (!selectedDateRange.startDate || !selectedDateRange.endDate) {
-                    alert('⚠️ Por favor selecciona ambas fechas');
+                    showWarning('Por favor selecciona ambas fechas');
                     return;
                   }
                   setShowDatePicker(false);

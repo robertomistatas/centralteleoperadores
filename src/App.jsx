@@ -15,6 +15,7 @@ import TeleoperadoraDashboard from './components/seguimientos/TeleoperadoraDashb
 import TeleoperadoraCalendar from './components/seguimientos/TeleoperadoraCalendar';
 import GestionesModule from './components/gestiones/GestionesModule';
 import SuperAdminDashboard from './components/admin/SuperAdminDashboard';
+import HistorialSeguimientos from './components/historial/HistorialSeguimientos';
 import usePermissions from './hooks/usePermissions';
 import { useUserSync } from './hooks/useUserSync';
 import { syncKarolAutomatically } from './services/syncKarol'; // ⭐ NUEVO
@@ -1646,17 +1647,8 @@ const TeleasistenciaApp = () => {
   // Debug logs comentados para evitar ciclos infinitos
   // console.log('🎯 App.jsx - assignmentsToUse final:', assignmentsToUse);
   
-  const followUpData = getFollowUpData(assignmentsToUse);
-  
-  // console.log('📊 App.jsx - followUpData resultado:', followUpData);
-  
-  // Filtros para historial de seguimientos
-  const filteredFollowUps = followUpData.filter(item => {
-    const matchesFilter = filterStatus === 'all' || item.status === filterStatus;
-    const matchesSearch = item.beneficiary.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         item.operator.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesFilter && matchesSearch;
-  });
+  // ✅ ELIMINADO: followUpData y filteredFollowUps ahora se calculan dentro del componente HistorialSeguimientos
+  // Ver: src/components/historial/HistorialSeguimientos.jsx
 
   const MetricCard = ({ title, value, subtitle, icon: Icon, trend, color = "blue" }) => (
     <div className="bg-white rounded-lg shadow-md p-6 border-l-4 border-blue-500">
@@ -1746,22 +1738,29 @@ const TeleasistenciaApp = () => {
             </div>
           </div>
           
-          {/* Indicador de estado de conexión */}
-          <div className="mb-4 p-2 rounded-lg bg-gray-50">
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${
-                firebaseStatus === 'connected' ? 'bg-green-500' : 
-                firebaseStatus === 'connecting' ? 'bg-yellow-500' : 'bg-orange-500'
-              }`}></div>
-              <span className="text-xs text-gray-600">
-                {firebaseStatus === 'connected' ? 'Firebase conectado' : 
-                 firebaseStatus === 'connecting' ? 'Conectando...' : 'Modo demo'}
-              </span>
+          {/* Indicador de estado de conexión - Mejorado y elegante */}
+          <div className="mb-4 p-3 rounded-lg bg-gradient-to-r from-gray-50 to-gray-100 border border-gray-200">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium text-gray-700">Estado de conexión</span>
+              <div className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${
+                firebaseStatus === 'connected' ? 'bg-green-100 text-green-700' : 
+                firebaseStatus === 'connecting' ? 'bg-yellow-100 text-yellow-700' : 'bg-orange-100 text-orange-700'
+              }`}>
+                <div className={`w-2 h-2 rounded-full ${
+                  firebaseStatus === 'connected' ? 'bg-green-500 animate-pulse' : 
+                  firebaseStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' : 'bg-orange-500'
+                }`}></div>
+                <span>
+                  {firebaseStatus === 'connected' ? 'Online' : 
+                   firebaseStatus === 'connecting' ? 'Conectando...' : 'Demo'}
+                </span>
+              </div>
             </div>
-            {callData.length > 0 && (
-              <p className="text-xs text-gray-500 mt-1">
-                {callData.length} llamadas cargadas
-              </p>
+            {firebaseStatus === 'connected' && callData.length > 0 && (
+              <div className="text-xs text-gray-600 flex items-center gap-1">
+                <Database className="w-3 h-3" />
+                <span>{callData.length.toLocaleString()} registros cargados</span>
+              </div>
             )}
           </div>
           
@@ -2002,8 +2001,7 @@ const TeleasistenciaApp = () => {
 
     return (
     <div className="space-y-8">
-      {/* Banner de estado de datos */}
-      <DataStatusBanner />
+      {/* Banner de estado eliminado - ahora se muestra indicador discreto en el header */}
       
       {/* 🎯 RESUMEN EJECUTIVO - Similar a análisis de IA */}
       <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl p-6 text-white">
@@ -3017,186 +3015,8 @@ const TeleasistenciaApp = () => {
     </div>
   );
 
-  const FollowUpHistory = () => (
-    <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h3 className="text-lg font-semibold mb-4">Historial de Seguimientos</h3>
-        <p className="text-gray-600 mb-6">
-          Clasifica beneficiarios por frecuencia y estado de contacto.
-        </p>
-        
-        {/* Estadísticas de seguimiento */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-green-800 font-semibold">Al día</p>
-                <p className="text-2xl font-bold text-green-600">
-                  {followUpData.filter(f => f.status === 'al-dia').length}
-                </p>
-              </div>
-              <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                <span className="text-white text-sm">✓</span>
-              </div>
-            </div>
-          </div>
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-yellow-800 font-semibold">Pendientes</p>
-                <p className="text-2xl font-bold text-yellow-600">
-                  {followUpData.filter(f => f.status === 'pendiente').length}
-                </p>
-              </div>
-              <div className="w-8 h-8 bg-yellow-500 rounded-full flex items-center justify-center">
-                <span className="text-white text-sm">⏳</span>
-              </div>
-            </div>
-          </div>
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-red-800 font-semibold">Urgentes</p>
-                <p className="text-2xl font-bold text-red-600">
-                  {followUpData.filter(f => f.status === 'urgente').length}
-                </p>
-              </div>
-              <div className="w-8 h-8 bg-red-500 rounded-full flex items-center justify-center">
-                <span className="text-white text-sm">⚠</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Filtros */}
-        <div className="flex flex-wrap gap-4 mb-6">
-          <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-gray-400" />
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            >
-              <option value="all">Todos los estados</option>
-              <option value="al-dia">Al día</option>
-              <option value="pendiente">Pendiente</option>
-              <option value="urgente">Urgente</option>
-            </select>
-          </div>
-          <div className="flex items-center gap-2">
-            <Search className="w-4 h-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Buscar beneficiario o teleoperadora..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            />
-          </div>
-        </div>
-
-        {/* Tarjetas de seguimiento */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredFollowUps.length === 0 ? (
-            <div className="col-span-full bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-              <div className="flex flex-col items-center">
-                <FileSpreadsheet className="w-12 h-12 text-gray-400 mb-4" />
-                <h4 className="text-lg font-medium text-gray-900 mb-2">
-                  No hay datos de seguimiento
-                </h4>
-                <p className="text-gray-600 mb-4 max-w-md">
-                  {!hasCallData ? 
-                    'Para ver el historial de seguimientos, sube un archivo Excel con datos de llamadas desde el Panel Principal.' :
-                    'No se encontraron seguimientos que coincidan con los filtros aplicados.'
-                  }
-                </p>
-                {!hasCallData && (
-                  <div className="text-sm text-gray-500">
-                    💡 Ve al <strong>Panel Principal</strong> → <strong>Cargar Excel</strong> para comenzar
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            filteredFollowUps.map((item) => (
-            <div key={item.id} className={`border-2 rounded-lg p-4 hover:shadow-md transition-shadow ${
-              item.status === 'al-dia' ? 'border-green-200 bg-green-50' :
-              item.status === 'pendiente' ? 'border-yellow-200 bg-yellow-50' :
-              'border-red-200 bg-red-50'
-            }`}>
-              <div className="flex items-start justify-between mb-3">
-                <h4 className="font-semibold text-gray-900">{item.beneficiary}</h4>
-                <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                  item.status === 'al-dia' 
-                    ? 'bg-green-100 text-green-800 border border-green-300'
-                    : item.status === 'pendiente'
-                    ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
-                    : 'bg-red-100 text-red-800 border border-red-300'
-                }`}>
-                  {item.status === 'al-dia' ? '✅ Al día' : 
-                   item.status === 'pendiente' ? '⏳ Pendiente' : '⚠️ Urgente'}
-                </span>
-              </div>
-              
-              <div className="space-y-2 text-sm">
-                <div className="flex items-center text-gray-700">
-                  <User className="w-4 h-4 mr-2 text-gray-500" />
-                  <span className="font-medium">Teleoperadora:</span>
-                  <span className="ml-1">{item.operator}</span>
-                </div>
-                
-                <div className="flex items-center text-gray-700">
-                  <Phone className="w-4 h-4 mr-2 text-gray-500" />
-                  <span className="font-medium">Teléfono:</span>
-                  <span className="ml-1">{item.phone}</span>
-                </div>
-                
-                <div className="flex items-center text-gray-700">
-                  <Clock className="w-4 h-4 mr-2 text-gray-500" />
-                  <span className="font-medium">Última llamada:</span>
-                  <span className="ml-1">{item.lastCall}</span>
-                </div>
-                
-                <div className="flex items-center text-gray-700">
-                  <BarChart3 className="w-4 h-4 mr-2 text-gray-500" />
-                  <span className="font-medium">Llamadas:</span>
-                  <span className="ml-1">{item.callCount} total ({item.successfulCallCount || 0} exitosas)</span>
-                </div>
-                
-                {item.daysSinceLastCall !== null && (
-                  <div className="flex items-center text-gray-700">
-                    <Calendar className="w-4 h-4 mr-2 text-gray-500" />
-                    <span className="font-medium">Hace:</span>
-                    <span className="ml-1">{item.daysSinceLastCall} días</span>
-                  </div>
-                )}
-                
-                {item.lastCallResult && item.lastCallResult !== 'Sin resultado' && (
-                  <div className="mt-2 p-2 bg-gray-100 rounded text-xs">
-                    <span className="font-medium">Último resultado:</span>
-                    <span className="ml-1">{item.lastCallResult}</span>
-                  </div>
-                )}
-              </div>
-              
-              {item.statusReason && (
-                <div className={`mt-3 p-2 rounded text-xs ${
-                  item.status === 'al-dia' ? 'bg-green-100 text-green-700' :
-                  item.status === 'pendiente' ? 'bg-yellow-100 text-yellow-700' :
-                  'bg-red-100 text-red-700'
-                }`}>
-                  <div className="flex items-start">
-                    {item.status === 'urgente' && <AlertCircle className="w-3 h-3 mr-1 mt-0.5 flex-shrink-0" />}
-                    <span>{item.statusReason}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          )))}
-        </div>
-      </div>
-    </div>
-  );
+  // ✅ COMPONENTE ELIMINADO: FollowUpHistory ahora es un módulo separado
+  // Ver: src/components/historial/HistorialSeguimientos.jsx
 
   return (
     <>
@@ -3286,7 +3106,11 @@ const TeleasistenciaApp = () => {
               <GestionesModule />
             </ErrorBoundary>
           )}
-          {activeTab === 'history' && <FollowUpHistory />}
+          {activeTab === 'history' && (
+            <ErrorBoundary>
+              <HistorialSeguimientos />
+            </ErrorBoundary>
+          )}
           {activeTab === 'audit' && (
             <ErrorBoundary>
               <AuditDemo />

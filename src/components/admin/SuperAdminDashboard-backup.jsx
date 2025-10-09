@@ -19,6 +19,7 @@ import {
   UserPlus
 } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
+import { useUIStore } from '../../stores/useUIStore';
 import useUserManagementStore from '../../stores/useUserManagementStore';
 import { userManagementService } from '../../services/userManagementService';
 import UserCard from './UserCard';
@@ -53,6 +54,8 @@ const SuperAdminDashboard = () => {
     isSuperAdmin,
     exportUsers
   } = useUserManagementStore();
+
+  const { showError, showSuccess } = useUIStore();
 
   // Estados locales
   const [activeTab, setActiveTab] = useState('users'); // users, roles, settings
@@ -95,7 +98,7 @@ const SuperAdminDashboard = () => {
       setShowCreateModal(false);
     } catch (error) {
       console.error('Error creando usuario:', error);
-      alert('Error al crear usuario: ' + error.message);
+      showError('Error al crear usuario: ' + error.message);
     } finally {
       setActionLoading(false);
     }
@@ -112,7 +115,7 @@ const SuperAdminDashboard = () => {
       setSelectedUser(null);
     } catch (error) {
       console.error('Error editando usuario:', error);
-      alert('Error al editar usuario: ' + error.message);
+      showError('Error al editar usuario: ' + error.message);
     } finally {
       setActionLoading(false);
     }
@@ -127,7 +130,7 @@ const SuperAdminDashboard = () => {
       await deleteUser(userId);
     } catch (error) {
       console.error('Error eliminando usuario:', error);
-      alert('Error al eliminar usuario: ' + error.message);
+      showError('Error al eliminar usuario: ' + error.message);
     } finally {
       setActionLoading(false);
     }
@@ -140,7 +143,7 @@ const SuperAdminDashboard = () => {
       await toggleUserStatus(userId);
     } catch (error) {
       console.error('Error cambiando estado:', error);
-      alert('Error al cambiar estado: ' + error.message);
+      showError('Error al cambiar estado: ' + error.message);
     } finally {
       setActionLoading(false);
     }
@@ -155,7 +158,7 @@ const SuperAdminDashboard = () => {
       console.log('✅ Recarga completada');
     } catch (error) {
       console.error('❌ Error en recarga:', error);
-      alert('Error al recargar usuarios: ' + error.message);
+      showError('Error al recargar usuarios: ' + error.message);
     } finally {
       setActionLoading(false);
     }
@@ -186,24 +189,12 @@ ${diagnosis.documents?.length > 0 ?
 
 ${diagnosis.error ? `❌ ERROR: ${diagnosis.error}` : ''}`;
       
-      alert(message);
+      showSuccess(message);
     } catch (error) {
       console.error('❌ Error en diagnóstico:', error);
-      alert('Error ejecutando diagnóstico: ' + error.message);
+      showError('Error ejecutando diagnóstico: ' + error.message);
     } finally {
       setActionLoading(false);
-    }
-  };
-📧 Email: ${result.userEmail || 'N/A'}
-👑 Super Admin: ${result.isSuperAdmin ? 'Sí' : 'No'}
-📄 Documentos encontrados: ${result.documentsCount || 0}
-
-${result.error ? `❌ Error: ${result.error}` : '✅ Sin errores'}
-
-Ver consola para más detalles.`);
-    } catch (error) {
-      console.error('Error en diagnóstico:', error);
-      alert('Error ejecutando diagnóstico: ' + error.message);
     }
   };
 

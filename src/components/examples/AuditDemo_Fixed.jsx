@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useCallStore, useAppStore } from '../../stores';
+import { useUIStore } from '../../stores/useUIStore';
 import useMetricsStore from '../../stores/useMetricsStore';
 import { useMetricsWithFallback } from '../../utils/fallbackMetrics';
 import { BarChart3, FileSpreadsheet, TrendingUp, Users, Clock, Phone, User, Download, FileText, Printer } from 'lucide-react';
@@ -26,6 +27,8 @@ function AuditDemo() {
     operatorAssignments,
     getAllAssignments
   } = useAppStore();
+
+  const { showError } = useUIStore();
 
   // 🔄 USAR MISMA FUENTE DE DATOS QUE EL DASHBOARD
   const {
@@ -320,7 +323,7 @@ function AuditDemo() {
       
     } catch (error) {
       console.error('Error generando PDF:', error);
-      alert('Error al generar el PDF');
+      showError('Error al generar el PDF');
     } finally {
       setIsGeneratingPDF(false);
     }

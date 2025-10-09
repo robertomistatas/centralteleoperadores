@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { Phone, User, Clock } from 'lucide-react';
 import { useCallStore, CALL_STATUSES } from '../../stores';
+import { useUIStore } from '../../stores/useUIStore';
 
 const CallInitiator = () => {
   const { setCall, isCallActive, currentCall } = useCallStore();
+  const { showWarning } = useUIStore();
   const [formData, setFormData] = useState({
     beneficiary: '',
     phone: '',
@@ -20,7 +22,7 @@ const CallInitiator = () => {
 
   const handleStartCall = () => {
     if (!formData.beneficiary || !formData.phone) {
-      alert('Por favor completa todos los campos requeridos');
+      showWarning('Por favor completa todos los campos requeridos');
       return;
     }
 

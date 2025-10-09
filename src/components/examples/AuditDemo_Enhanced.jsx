@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useCallStore, useAppStore } from '../../stores';
+import { useUIStore } from '../../stores/useUIStore';
 import { BarChart3, FileSpreadsheet, TrendingUp, Users, Clock, Phone, User, Download, FileText, Printer } from 'lucide-react';
 import { findOperatorForBeneficiary, shouldExcludeAsOperator } from '../../utils/operatorMapping';
 
@@ -24,6 +25,8 @@ function AuditDemo() {
     operatorAssignments,
     getAllAssignments
   } = useAppStore();
+
+  const { showError } = useUIStore();
 
   // Estado para controlar la exportación de PDFs
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -601,7 +604,7 @@ function AuditDemo() {
       
     } catch (error) {
       console.error('Error generando PDF:', error);
-      alert('Error al generar el PDF. Por favor, inténtelo nuevamente.');
+      showError('Error al generar el PDF. Por favor, inténtelo nuevamente.');
     } finally {
       setIsGeneratingPDF(false);
     }
