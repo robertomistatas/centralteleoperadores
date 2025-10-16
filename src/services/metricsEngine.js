@@ -3,10 +3,16 @@
  * Motor unificado de cálculo de métricas
  * 
  * FASE 3 - TAREA 2: Servicio Unificado de Métricas
+ * FASE 4 - TAREA 6: Integración con Performance Monitoring
  * 
  * Objetivo:
  * Centralizar TODOS los cálculos de métricas en un único motor
  * usado por Dashboard, Auditoría Avanzada, Historial y Excel.
+ * 
+ * Optimizaciones TAREA 6:
+ * - Performance tracking automático
+ * - Detección de operaciones lentas (>500ms)
+ * - Auditoría de métricas calculadas
  * 
  * Elimina completamente los cálculos locales duplicados.
  * 
@@ -21,15 +27,32 @@ import {
   groupByResult,
   groupByDate
 } from '../utils/dataNormalizer';
+import { measurePerformance } from '../utils/performanceMonitor';
 
 /**
  * Calcula métricas globales consolidadas
+ * CON OPTIMIZACIÓN: Performance tracking automático
  * 
  * @param {Array} records - Array de registros (pueden estar sin normalizar)
  * @param {Object} options - Opciones de cálculo
  * @returns {Object} Métricas globales
  */
 export const computeGlobalMetrics = (records = [], options = {}) => {
+  // Usar measurePerformance para tracking automático
+  return measurePerformance(
+    () => computeGlobalMetricsInternal(records, options),
+    'computeGlobalMetrics',
+    { recordsCount: records.length, ...options }
+  );
+};
+
+/**
+ * Implementación interna de computeGlobalMetrics
+ * (Envuelta por measurePerformance)
+ * 
+ * @private
+ */
+const computeGlobalMetricsInternal = (records = [], options = {}) => {
   const startTime = Date.now();
   
   logger.info('[MetricsEngine] Iniciando cálculo de métricas globales', {
@@ -37,8 +60,12 @@ export const computeGlobalMetrics = (records = [], options = {}) => {
     options
   });
 
-  // Normalizar todos los registros primero
-  const normalizedRecords = normalizeRecords(records);
+  // Normalizar todos los registros primero (con medición)
+  const normalizedRecords = measurePerformance(
+    () => normalizeRecords(records),
+    'normalizeRecords',
+    { recordsCount: records.length }
+  );
   
   if (normalizedRecords.length === 0) {
     logger.warn('[MetricsEngine] No hay registros normalizados para calcular');
