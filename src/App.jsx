@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, BarChart3, PieChart, Calendar, AlertCircle, Plus, Edit, Trash2, UserPlus, FileSpreadsheet, Save, X, LogOut, User, Zap, Database, Activity, Settings } from 'lucide-react';
+import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, BarChart3, PieChart, Calendar, AlertCircle, Plus, Edit, Trash2, UserPlus, FileSpreadsheet, Save, X, LogOut, User, Zap, Database, Activity, Settings, GitCompare } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useAuth } from './AuthContext';
 import { operatorService, assignmentService, callDataService, resetErrorState } from './firestoreService';
@@ -16,9 +16,13 @@ import TeleoperadoraCalendar from './components/seguimientos/TeleoperadoraCalend
 import GestionesModule from './components/gestiones/GestionesModule';
 import SuperAdminDashboard from './components/admin/SuperAdminDashboard';
 import HistorialSeguimientos from './components/historial/HistorialSeguimientos';
+import ExcelUploader from './components/excel/ExcelUploader'; // ⭐ NUEVO: Análisis de Excel
+import ExcelCharts from './components/excel/ExcelCharts'; // ⭐ FASE 2: Visualizaciones
+import ExcelComparison from './components/excel/ExcelComparison'; // ⭐ FASE 2: Comparador
 import usePermissions from './hooks/usePermissions';
 import { useUserSync } from './hooks/useUserSync';
 import { syncKarolAutomatically } from './services/syncKarol'; // ⭐ NUEVO
+import { initRealtimeSync, stopRealtimeSync } from './services/realtimeSync'; // ⭐ FASE 4: Realtime Sync
 
 const TeleasistenciaApp = () => {
   const { user, logout } = useAuth();
@@ -214,6 +218,99 @@ const TeleasistenciaApp = () => {
       }
     }
   }, [user, userProfile, dataLoaded]);
+
+  // ⭐ FASE 4 - TAREA 4: Activar realtimeSync para Super Admin
+  useEffect(() => {
+    // Solo para Super Admin y cuando no está en SafeMode
+    const isSafeMode = import.meta.env.VITE_EXCEL_SAFE_MODE !== 'false';
+    
+    if (isSuperAdmin && !isSafeMode && user && userProfile) {
+      logger.audit('[App] Inicializando realtimeSync para Super Admin', {
+        email: userProfile.email,
+        uid: user.uid
+      });
+
+      try {
+        const cleanup = initRealtimeSync({
+          syncExcel: true,
+          syncSeguimientos: true,
+          syncOperators: true
+        });
+
+        // Retornar función de limpieza
+        return () => {
+          logger.audit('[App] Deteniendo realtimeSync');
+          cleanup();
+          stopRealtimeSync();
+        };
+      } catch (error) {
+        logger.error('[App] Error inicializando realtimeSync:', error);
+      }
+    } else {
+      if (!isSuperAdmin) {
+        logger.info('[App] realtimeSync no disponible - Usuario no es Super Admin');
+      }
+      if (isSafeMode) {
+        logger.info('[App] realtimeSync deshabilitado - SafeMode activo');
+      }
+    }
+  }, [isSuperAdmin, user, userProfile]);
+
+  // ⚡ FASE 4 - TAREA 5: Validación automática de consistencia (Super Admin only)
+  useEffect(() => {
+    if (!isSuperAdmin || !user || !userProfile) return;
+
+    logger.audit('[App] Inicializando validación automática de consistencia');
+
+    // Ejecutar validación inicial después de 5 segundos (dar tiempo a cargar datos)
+    const initialTimeout = setTimeout(async () => {
+      try {
+        const { runConsistencyTest } = await import('./tests/consistencyTest.js');
+        const stores = {
+          callStore: useCallStore,
+          seguimientosStore: useSeguimientosStore
+        };
+        const report = runConsistencyTest(stores);
+        
+        if (!report.withinTolerance) {
+          console.warn('⚠️ ALERTA: Inconsistencias detectadas en validación inicial');
+          showError(`Inconsistencias detectadas: ${report.maxDifference} diferencia máxima`);
+        } else {
+          console.log('✅ Validación inicial exitosa - Métricas consistentes');
+        }
+      } catch (error) {
+        logger.error('[App] Error en validación inicial:', error);
+      }
+    }, 5000);
+
+    // Validación periódica cada 60 segundos
+    const validationInterval = setInterval(async () => {
+      try {
+        const { runConsistencyTest } = await import('./tests/consistencyTest.js');
+        const stores = {
+          callStore: useCallStore,
+          seguimientosStore: useSeguimientosStore
+        };
+        const report = runConsistencyTest(stores);
+        
+        if (!report.withinTolerance) {
+          logger.warn('[App] Inconsistencias detectadas en validación periódica', {
+            maxDiff: report.maxDifference,
+            status: report.globalStatus
+          });
+        }
+      } catch (error) {
+        logger.error('[App] Error en validación periódica:', error);
+      }
+    }, 60000); // 60 segundos
+
+    // Cleanup
+    return () => {
+      clearTimeout(initialTimeout);
+      clearInterval(validationInterval);
+      logger.audit('[App] Deteniendo validación automática de consistencia');
+    };
+  }, [isSuperAdmin, user, userProfile, showError]);
 
   useEffect(() => {
     if (user && userProfile && !dataLoaded && !loadingRef.current) {
@@ -1683,7 +1780,10 @@ const TeleasistenciaApp = () => {
       history: Clock,
       audit: BarChart3,
       reports: PieChart,
-      config: Settings
+      config: Settings,
+      excel: FileSpreadsheet, // ⭐ NUEVO: Ícono para análisis de Excel
+      excelCharts: BarChart3, // ⭐ FASE 2: Visualizaciones
+      excelComparison: GitCompare // ⭐ FASE 2: Comparador
     };
 
     return (
@@ -3049,6 +3149,7 @@ const TeleasistenciaApp = () => {
               {activeTab === 'audit' && 'Auditoría Avanzada'}
               {activeTab === 'metrics' && 'Métricas Avanzadas'}
               {activeTab === 'config' && 'Configuración del Sistema'}
+              {activeTab === 'excel' && 'Análisis de Excel (Modo Seguro)'}
             </h1>
           </div>
 
@@ -3124,6 +3225,21 @@ const TeleasistenciaApp = () => {
           {activeTab === 'config' && canViewConfig && (
             <ErrorBoundary>
               <SuperAdminDashboard />
+            </ErrorBoundary>
+          )}
+          {activeTab === 'excel' && isSuperAdmin && (
+            <ErrorBoundary>
+              <ExcelUploader />
+            </ErrorBoundary>
+          )}
+          {activeTab === 'excelCharts' && isSuperAdmin && (
+            <ErrorBoundary>
+              <ExcelCharts />
+            </ErrorBoundary>
+          )}
+          {activeTab === 'excelComparison' && isSuperAdmin && (
+            <ErrorBoundary>
+              <ExcelComparison />
             </ErrorBoundary>
           )}
         </div>

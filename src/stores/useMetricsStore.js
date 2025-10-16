@@ -1,6 +1,10 @@
 /**
  * Store de Zustand para métricas en tiempo real
  * Se conecta a Firestore usando onSnapshot para actualizaciones automáticas
+ * 
+ * FASE 2 - TAREA 3: Integración con análisis de Excel
+ * - Listener realtime para colección analisisExcel
+ * - Métricas unificadas con metricsUtils
  */
 
 import { create } from 'zustand';
@@ -12,9 +16,11 @@ import {
   onSnapshot, 
   query, 
   orderBy, 
-  limit,
-  where 
+  limit
 } from 'firebase/firestore';
+import { listenToAnalyses } from '../services/firestoreSyncService';
+import { computeUnifiedMetrics } from '../utils/metricsUtils';
+import logger from '../utils/logger';
 
 const useMetricsStore = create(
   subscribeWithSelector((set, get) => ({
@@ -24,12 +30,18 @@ const useMetricsStore = create(
     beneficiariosMetrics: {},
     noAsignadosMetrics: null,
     
+    // FASE 2: Métricas de análisis de Excel
+    excelAnalysisMetrics: null,
+    allAnalyses: [],
+    lastSyncExcel: null,
+    
     // Estados de carga
     loading: {
       global: true,
       teleoperadoras: true,
       beneficiarios: true,
-      noAsignados: true
+      noAsignados: true,
+      excelAnalysis: false
     },
     
     // Errores
@@ -37,7 +49,8 @@ const useMetricsStore = create(
       global: null,
       teleoperadoras: null,
       beneficiarios: null,
-      noAsignados: null
+      noAsignados: null,
+      excelAnalysis: null
     },
     
     // Listeners activos (para cleanup)
@@ -388,6 +401,113 @@ const useMetricsStore = create(
           operatorId?.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
         );
       });
+    },
+    
+    // ===== FASE 2: SINCRONIZACIÓN REALTIME DE ANÁLISIS EXCEL =====
+    
+    /**
+     * Inicializa el listener en tiempo real para análisis de Excel
+     * Se ejecuta automáticamente cuando se monta el componente que usa este store
+     */
+    initExcelAnalysisListener: () => {
+      logger.info('[useMetricsStore] 📡 Iniciando listener de análisis Excel...');
+
+      set((state) => ({
+        loading: { ...state.loading, excelAnalysis: true }
+      }));
+
+      try {
+        const unsubscribe = listenToAnalyses(
+          (analyses) => {
+            logger.info('[useMetricsStore] 🔄 Análisis recibidos del listener', {
+              count: analyses.length
+            });
+
+            // Calcular métricas unificadas
+            const unifiedMetrics = computeUnifiedMetrics(analyses);
+
+            // Actualizar estado
+            set((state) => ({
+              allAnalyses: analyses,
+              excelAnalysisMetrics: unifiedMetrics,
+              lastSyncExcel: new Date().toISOString(),
+              loading: { ...state.loading, excelAnalysis: false },
+              errors: { ...state.errors, excelAnalysis: null }
+            }));
+
+            logger.info('[useMetricsStore] ✅ Métricas de Excel actualizadas', {
+              total: unifiedMetrics.total,
+              tasaExito: unifiedMetrics.tasaExito,
+              operadoras: Object.keys(unifiedMetrics.operadoras).length
+            });
+          },
+          (error) => {
+            logger.error('[useMetricsStore] ❌ Error en listener de análisis Excel', error);
+
+            set((state) => ({
+              loading: { ...state.loading, excelAnalysis: false },
+              errors: { ...state.errors, excelAnalysis: error.message }
+            }));
+          }
+        );
+
+        // Agregar unsubscribe a la lista
+        set((state) => ({
+          unsubscribers: [...state.unsubscribers, unsubscribe]
+        }));
+
+        logger.info('[useMetricsStore] ✅ Listener de análisis Excel iniciado');
+
+      } catch (error) {
+        logger.error('[useMetricsStore] ❌ Error al iniciar listener de Excel', error);
+
+        set((state) => ({
+          loading: { ...state.loading, excelAnalysis: false },
+          errors: { ...state.errors, excelAnalysis: error.message }
+        }));
+      }
+    },
+
+    /**
+     * Obtiene las métricas de análisis de Excel
+     */
+    getExcelMetrics: () => {
+      return get().excelAnalysisMetrics;
+    },
+
+    /**
+     * Obtiene todos los análisis cargados
+     */
+    getAllExcelAnalyses: () => {
+      return get().allAnalyses;
+    },
+
+    /**
+     * Verifica si hay datos de Excel sincronizados
+     */
+    hasExcelData: () => {
+      const { allAnalyses } = get();
+      return allAnalyses && allAnalyses.length > 0;
+    },
+
+    /**
+     * Obtiene la última fecha de sincronización de Excel
+     */
+    getLastExcelSync: () => {
+      return get().lastSyncExcel;
+    },
+
+    /**
+     * Fuerza una recarga manual de métricas de Excel
+     * Útil si el listener falla o para debug
+     */
+    refreshExcelMetrics: () => {
+      logger.info('[useMetricsStore] 🔄 Forzando recarga de métricas Excel...');
+      
+      // Reiniciar listener
+      const { cleanup, initExcelAnalysisListener } = get();
+      cleanup();
+      initExcelAnalysisListener();
     }
   }))
 );

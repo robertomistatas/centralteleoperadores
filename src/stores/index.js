@@ -5,6 +5,7 @@
 export { default as useUIStore } from './useUIStore';
 export { default as useAuthStore } from './useAuthStore';
 export { default as useAsignationsStore } from './useAsignationsStore';
+export { default as useExcelStore } from './useExcelStore'; // ⭐ NUEVO: Store para análisis de Excel
 
 // ===== STORES EXISTENTES (compatibles) =====
 export { default as useUserStore } from './useUserStore';

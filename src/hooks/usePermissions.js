@@ -249,6 +249,25 @@ export const usePermissions = () => {
       });
     }
 
+    // ⭐ NUEVO: Módulo de Análisis de Excel (solo Super Admin)
+    if (isSuper) {
+      modules.push({
+        id: 'excel',
+        label: 'Análisis de Excel',
+        icon: 'FileSpreadsheet'
+      });
+      modules.push({
+        id: 'excelCharts',
+        label: 'Visualizaciones Excel',
+        icon: 'BarChart3'
+      });
+      modules.push({
+        id: 'excelComparison',
+        label: 'Comparar Análisis',
+        icon: 'GitCompare'
+      });
+    }
+
     return modules;
   }, [
     canViewDashboard,

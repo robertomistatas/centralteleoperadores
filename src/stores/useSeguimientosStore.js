@@ -5,6 +5,8 @@ import { seguimientoService } from '../services/seguimientoService';
 import { normalizeName } from '../utils/validators';
 import logger from '../utils/logger';
 import { auth } from '../firebase';
+import { listenToAnalyses } from '../services/firestoreSyncService';
+import { computeUnifiedMetrics } from '../utils/metricsUtils';
 
 const { COLLECTIONS } = firestoreService;
 
@@ -13,6 +15,7 @@ const { COLLECTIONS } = firestoreService;
  * Maneja la sincronización en tiempo real con Firestore
  * 
  * Refactorización: Usa firestoreService centralizado y nomenclatura operatorId/operatorName
+ * FASE 2 - TAREA 3: Integración con análisis de Excel para métricas unificadas
  */
 export const useSeguimientosStore = create(
   subscribeWithSelector((set, get) => ({
@@ -26,6 +29,11 @@ export const useSeguimientosStore = create(
     unsubscribe: null, // Función para cancelar la suscripción de Firestore
     selectedDate: null, // Fecha seleccionada en el calendario
     dailyContacts: [], // Contactos del día seleccionado
+    
+    // FASE 2: Métricas de análisis Excel
+    excelMetrics: null,
+    lastExcelSync: null,
+    excelUnsubscribe: null,
 
     // ===== SUSCRIPCIÓN A FIRESTORE =====
     
@@ -381,6 +389,65 @@ export const useSeguimientosStore = create(
         ocupados,
         tasaExito: thisMonthContacts.length > 0 ? Math.round((exitosos / thisMonthContacts.length) * 100) : 0
       };
+    },
+    
+    // ===== FASE 2: SINCRONIZACIÓN CON ANÁLISIS EXCEL =====
+    
+    /**
+     * Inicializa listener para análisis de Excel
+     * Sincroniza métricas con datos de archivos Excel procesados
+     */
+    initExcelListener: () => {
+      logger.info('[useSeguimientosStore] 📡 Iniciando listener de análisis Excel...');
+
+      try {
+        const unsubscribe = listenToAnalyses(
+          (analyses) => {
+            logger.info('[useSeguimientosStore] 🔄 Análisis Excel recibidos', {
+              count: analyses.length
+            });
+
+            // Calcular métricas unificadas
+            const metrics = computeUnifiedMetrics(analyses);
+
+            // Actualizar estado
+            set({
+              excelMetrics: metrics,
+              lastExcelSync: new Date().toISOString()
+            });
+
+            logger.info('[useSeguimientosStore] ✅ Métricas Excel sincronizadas');
+          },
+          (error) => {
+            logger.error('[useSeguimientosStore] ❌ Error en listener Excel', error);
+          }
+        );
+
+        // Guardar unsubscribe
+        set({ excelUnsubscribe: unsubscribe });
+
+      } catch (error) {
+        logger.error('[useSeguimientosStore] ❌ Error al iniciar listener Excel', error);
+      }
+    },
+
+    /**
+     * Detiene el listener de análisis Excel
+     */
+    stopExcelListener: () => {
+      const { excelUnsubscribe } = get();
+      if (excelUnsubscribe) {
+        excelUnsubscribe();
+        set({ excelUnsubscribe: null });
+        logger.info('[useSeguimientosStore] 🛑 Listener de Excel detenido');
+      }
+    },
+
+    /**
+     * Obtiene métricas de análisis Excel
+     */
+    getExcelMetrics: () => {
+      return get().excelMetrics;
     }
   }))
 );

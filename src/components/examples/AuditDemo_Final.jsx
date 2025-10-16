@@ -1,40 +1,65 @@
-import React, { useEffect, useState } from 'react';
+/**
+ * AuditDemo_Final - Módulo de Auditoría Avanzada
+ * 
+ * FASE 4 - TAREA 2: Integrado con metricsEngine.js
+ * - Usa computeGlobalMetrics() para cálculos unificados
+ * - Usa normalizeRecords() para datos limpios
+ * - Sincronizado con Dashboard y Historial
+ * - Métricas consistentes en tiempo real
+ */
+
+import React, { useEffect, useState, useMemo } from 'react';
 import { useCallStore, useAppStore } from '../../stores';
 import { useUIStore } from '../../stores/useUIStore';
 import useMetricsStore from '../../stores/useMetricsStore';
+import { useSeguimientosStore } from '../../stores/useSeguimientosStore';
 import { useMetricsWithFallback } from '../../utils/fallbackMetrics';
-import { BarChart3, FileSpreadsheet, TrendingUp, Users, Clock, Phone, User, Download, FileText, Printer } from 'lucide-react';
+import { BarChart3, FileSpreadsheet, TrendingUp, Users, Clock, Phone, User, Download, FileText, Printer, Zap } from 'lucide-react';
 import { findOperatorForBeneficiary, shouldExcludeAsOperator } from '../../utils/operatorMapping';
+import { computeGlobalMetrics, formatMetricsForUI } from '../../services/metricsEngine';
+import { normalizeRecords } from '../../utils/dataNormalizer';
+import logger from '../../utils/logger';
 
 function AuditDemo() {
-  const {
-    callData,
-    callMetrics,
-    processedData,
-    isLoading,
-    lastUpdated,
-    dataSource,
-    clearData,
-    hasData,
-    getSuccessRate,
-    getOperatorMetrics,
-    getHourlyDistribution,
-    getFollowUpData
-  } = useCallStore();
-
-  const {
-    operators,
-    operatorAssignments,
-    getAllAssignments
-  } = useAppStore();
-
+  // ⚡ FASE 4 - TAREA 2: Datos unificados desde stores
+  const callData = useCallStore((state) => state.callData) || [];
+  const { processedData, dataSource, clearData, hasData, isLoading, lastUpdated } = useCallStore();
+  const seguimientos = useSeguimientosStore((state) => state.seguimientos) || [];
+  const { operators, operatorAssignments, getAllAssignments } = useAppStore();
   const { showError } = useUIStore();
 
-  // 🔄 USAR MISMA FUENTE DE DATOS QUE EL DASHBOARD
+  // ⚡ FASE 4: Normalización y métricas unificadas
+  const normalizedData = useMemo(() => {
+    const allRecords = [...(callData || []), ...(seguimientos || [])];
+    logger.audit('[AuditDemo] Normalizando registros', {
+      callData: callData.length,
+      seguimientos: seguimientos.length,
+      total: allRecords.length
+    });
+    return normalizeRecords(allRecords);
+  }, [callData, seguimientos]);
+
+  const unifiedMetrics = useMemo(() => {
+    const metrics = computeGlobalMetrics(normalizedData, {
+      includeTopOperators: true,
+      topN: 10,
+      includeHourly: true
+    });
+    logger.audit('[AuditDemo] Métricas calculadas', {
+      total: metrics.total,
+      tasaExito: metrics.tasaExito,
+      operadoras: metrics.porOperadora?.length || 0
+    });
+    return metrics;
+  }, [normalizedData]);
+
+  const formattedMetrics = useMemo(() => {
+    return formatMetricsForUI(unifiedMetrics, 'es-CL');
+  }, [unifiedMetrics]);
+
+  // 🔄 Mantener compatibilidad con metricsStore para listeners existentes
   const {
     globalMetrics,
-    getSummaryStats,
-    getTopOperators,
     loading,
     errors,
     initializeListeners,
@@ -42,8 +67,7 @@ function AuditDemo() {
   } = useMetricsStore();
 
   const fallbackMetrics = useMetricsWithFallback();
-  // 🎯 USAR EXACTAMENTE LA MISMA LÓGICA QUE EL DASHBOARD
-  const shouldUseFallback = errors.global || !globalMetrics || globalMetrics.totalCalls === 0;
+  const shouldUseFallback = errors.global || !unifiedMetrics || unifiedMetrics.total === 0;
 
   // Estado para controlar la exportación de PDFs
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -98,18 +122,16 @@ function AuditDemo() {
   const operatorMetrics = getOperatorMetrics ? getOperatorMetrics() : [];
   const hourlyDistribution = getHourlyDistribution ? getHourlyDistribution() : [];
 
-  // 🎯 CORRECCIÓN CRÍTICA: Usar datos reales del Call Store
+  // ⚡ FASE 4 - TAREA 2: Métricas por operadora desde motor unificado
   const getOperatorCallMetrics = () => {
-    console.log('🔍 [AUDIT FIXED] === USANDO DATOS REALES DEL CALL STORE ===');
+    logger.audit('[AuditDemo] Calculando métricas por operadora desde metricsEngine');
     
-    // 🔄 USAR DATOS REALES DEL CALL STORE (como el Dashboard principal)
-    if (!processedData || processedData.length === 0) {
-      console.log('⚠️ [AUDIT] No hay datos de llamadas disponibles en processedData');
+    if (!unifiedMetrics || !unifiedMetrics.porOperadora || unifiedMetrics.porOperadora.length === 0) {
+      logger.warn('[AuditDemo] No hay métricas por operadora disponibles');
       
-      // Como fallback usar datos simulados SOLO si no hay datos reales
       if (shouldUseFallback) {
         const topOperators = fallbackMetrics.getTopOperators(10);
-        console.log('📊 [AUDIT] Usando datos de fallback:', topOperators.length);
+        logger.audit('[AuditDemo] Usando fallback metrics', { operatorCount: topOperators.length });
         
         return topOperators.map((operator, index) => {
           const operatorInfo = operators?.find(op => 
@@ -144,100 +166,49 @@ function AuditDemo() {
       return [];
     }
 
-    // 🎯 USAR DATOS REALES DEL CALL STORE (COMO EL DASHBOARD)
-    console.log('✅ [AUDIT] Usando datos reales de processedData:', processedData.length, 'llamadas');
-    
-    // Obtener operadoras únicas de los datos reales
-    const operatorStats = {};
-    
-    processedData.forEach(call => {
-      const operatorName = call.operator || call.operador || call.teleoperadora || 'Sin asignar';
-      
-      if (!operatorStats[operatorName]) {
-        operatorStats[operatorName] = {
-          operatorName: operatorName,
-          totalCalls: 0,
-          successfulCalls: 0,
-          failedCalls: 0,
-          totalDuration: 0,
-          beneficiariesSet: new Set(),
-          calls: []
-        };
-      }
-      
-      operatorStats[operatorName].totalCalls++;
-      operatorStats[operatorName].calls.push(call);
-      
-      if (call.isSuccessful) {
-        operatorStats[operatorName].successfulCalls++;
-        operatorStats[operatorName].totalDuration += (call.duration || 0);
-      } else {
-        operatorStats[operatorName].failedCalls++;
-      }
-      
-      if (call.beneficiary) {
-        operatorStats[operatorName].beneficiariesSet.add(call.beneficiary);
-      }
+    // ⚡ USAR MÉTRICAS UNIFICADAS (metricsEngine.js)
+    logger.audit('[AuditDemo] Usando métricas unificadas', { 
+      operatorCount: unifiedMetrics.porOperadora.length,
+      total: unifiedMetrics.total
     });
+    
+    return unifiedMetrics.porOperadora.map((operatorMetrics, index) => {
+      const operatorInfo = operators?.find(op => 
+        op.name === operatorMetrics.operatorName || 
+        op.name?.toLowerCase().includes(operatorMetrics.operatorName.toLowerCase())
+      ) || {
+        id: `op-${index}`,
+        name: operatorMetrics.operatorName,
+        email: `${operatorMetrics.operatorName.toLowerCase().replace(/\s+/g, '.')}@mistatas.com`
+      };
+      
+      const assignedBeneficiariesArray = operatorAssignments?.[operatorInfo.id] || [];
+      const assignedBeneficiaries = assignedBeneficiariesArray.length || operatorMetrics.beneficiariosUnicos;
+      const contactedBeneficiaries = operatorMetrics.beneficiariosUnicos;
+      const uncontactedBeneficiaries = Math.max(0, assignedBeneficiaries - contactedBeneficiaries);
+      
+      const totalEffectiveMinutes = Math.round((operatorMetrics.duracionPromedio * operatorMetrics.exitosas / 60) * 10) / 10;
+      const averageMinutesPerCall = Math.round((operatorMetrics.duracionPromedio / 60) * 10) / 10;
+      const averageCallsPerBeneficiary = operatorMetrics.beneficiariosUnicos > 0 ? 
+        Math.round((operatorMetrics.total / operatorMetrics.beneficiariosUnicos) * 10) / 10 : 0;
 
-    // Convertir a formato requerido
-    const result = Object.values(operatorStats)
-      .filter(stats => stats.totalCalls > 0)
-      .map((stats, index) => {
-        const uniqueBeneficiaries = stats.beneficiariesSet.size;
-        const averageDuration = stats.successfulCalls > 0 ? 
-          Math.round(stats.totalDuration / stats.successfulCalls) : 0;
-        const successRate = stats.totalCalls > 0 ? 
-          Math.round((stats.successfulCalls / stats.totalCalls) * 100) : 0;
-        
-        // Buscar información del operador en el store de app
-        const operatorInfo = operators?.find(op => 
-          op.name === stats.operatorName || 
-          op.name?.toLowerCase().includes(stats.operatorName.toLowerCase())
-        ) || {
-          id: `op-${index}`,
-          name: stats.operatorName,
-          email: `${stats.operatorName.toLowerCase().replace(/\s+/g, '.')}@mistatas.com`
-        };
-        
-        // Calcular métricas adicionales
-        const assignedBeneficiariesArray = operatorAssignments?.[operatorInfo.id] || [];
-        const assignedBeneficiaries = assignedBeneficiariesArray.length || uniqueBeneficiaries;
-        const contactedBeneficiaries = uniqueBeneficiaries;
-        const uncontactedBeneficiaries = Math.max(0, assignedBeneficiaries - contactedBeneficiaries);
-        
-        const totalEffectiveMinutes = Math.round((averageDuration * stats.successfulCalls / 60) * 10) / 10;
-        const averageMinutesPerCall = Math.round((averageDuration / 60) * 10) / 10;
-        const averageCallsPerBeneficiary = uniqueBeneficiaries > 0 ? 
-          Math.round((stats.totalCalls / uniqueBeneficiaries) * 10) / 10 : 0;
-
-        return {
-          operatorName: stats.operatorName,
-          operatorInfo: operatorInfo,
-          // Métricas principales usando DATOS REALES
-          totalCalls: stats.totalCalls,
-          assignedBeneficiaries: assignedBeneficiaries,
-          contactedBeneficiaries: contactedBeneficiaries,
-          uncontactedBeneficiaries: uncontactedBeneficiaries,
-          successfulCalls: stats.successfulCalls,
-          failedCalls: stats.failedCalls,
-          successRate: successRate,
-          totalEffectiveMinutes: totalEffectiveMinutes,
-          averageMinutesPerCall: averageMinutesPerCall,
-          // Métricas adicionales
-          averageCallsPerBeneficiary: averageCallsPerBeneficiary,
-          beneficiariesWithCalls: contactedBeneficiaries,
-          allCallsData: stats.calls
-        };
-      })
-      .sort((a, b) => b.totalCalls - a.totalCalls); // Ordenar por total de llamadas
-
-    console.log('✅ [AUDIT] Métricas calculadas desde datos reales:', result.length, 'operadores');
-    result.forEach((r, index) => {
-      console.log(`  ${index + 1}. "${r.operatorName}": ${r.totalCalls} llamadas (${r.successfulCalls} exitosas), ${r.contactedBeneficiaries} contactados`);
-    });
-
-    return result;
+      return {
+        operatorName: operatorMetrics.operatorName,
+        operatorInfo: operatorInfo,
+        totalCalls: operatorMetrics.total,
+        assignedBeneficiaries: assignedBeneficiaries,
+        contactedBeneficiaries: contactedBeneficiaries,
+        uncontactedBeneficiaries: uncontactedBeneficiaries,
+        successfulCalls: operatorMetrics.exitosas,
+        failedCalls: operatorMetrics.fallidas,
+        successRate: operatorMetrics.tasaExito,
+        totalEffectiveMinutes: totalEffectiveMinutes,
+        averageMinutesPerCall: averageMinutesPerCall,
+        averageCallsPerBeneficiary: averageCallsPerBeneficiary,
+        beneficiariesWithCalls: contactedBeneficiaries,
+        allCallsData: [] // No incluir datos individuales para PDF
+      };
+    }).sort((a, b) => b.totalCalls - a.totalCalls);
   };
 
   const operatorCallMetrics = getOperatorCallMetrics();
@@ -525,7 +496,7 @@ function AuditDemo() {
         </div>
       </div>
 
-      {/* 📊 MÉTRICAS GENERALES */}
+      {/* 📊 MÉTRICAS GENERALES - FASE 4: Usando métricas unificadas */}
       {(hasData && hasData()) || shouldUseFallback ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
           <div className="bg-white rounded-lg shadow-md p-6">
@@ -533,9 +504,12 @@ function AuditDemo() {
               <div>
                 <p className="text-sm font-medium text-gray-600">Total Llamadas</p>
                 <p className="text-2xl font-bold text-blue-600">
-                  {operatorCallMetrics.reduce((sum, m) => sum + m.totalCalls, 0)}
+                  {formattedMetrics.totalFormatted}
                 </p>
-                <p className="text-xs text-blue-600 mt-1">Registros sincronizados</p>
+                <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                  <Zap className="w-3 h-3" />
+                  Métricas unificadas
+                </p>
               </div>
               <Phone className="w-8 h-8 text-blue-500" />
             </div>
@@ -546,8 +520,7 @@ function AuditDemo() {
               <div>
                 <p className="text-sm font-medium text-gray-600">Tasa de Éxito</p>
                 <p className="text-2xl font-bold text-green-600">
-                  {operatorCallMetrics.length > 0 ? 
-                    Math.round(operatorCallMetrics.reduce((sum, m) => sum + m.successRate, 0) / operatorCallMetrics.length) : 0}%
+                  {formattedMetrics.tasaExitoFormatted}
                 </p>
                 <p className="text-xs text-green-600 mt-1">Promedio general</p>
               </div>
@@ -559,7 +532,9 @@ function AuditDemo() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Operadores Activos</p>
-                <p className="text-2xl font-bold text-purple-600">{operatorCallMetrics.length}</p>
+                <p className="text-2xl font-bold text-purple-600">
+                  {unifiedMetrics.porOperadora?.length || 0}
+                </p>
                 <p className="text-xs text-purple-600 mt-1">Con actividad registrada</p>
               </div>
               <Users className="w-8 h-8 text-purple-500" />
@@ -571,8 +546,7 @@ function AuditDemo() {
               <div>
                 <p className="text-sm font-medium text-gray-600">Duración Promedio</p>
                 <p className="text-2xl font-bold text-orange-600">
-                  {operatorCallMetrics.length > 0 ? 
-                    Math.round(operatorCallMetrics.reduce((sum, m) => sum + m.averageMinutesPerCall, 0) / operatorCallMetrics.length) : 0} min
+                  {formattedMetrics.duracionPromedioFormatted} min
                 </p>
                 <p className="text-xs text-orange-600 mt-2">Tiempo por llamada exitosa</p>
               </div>

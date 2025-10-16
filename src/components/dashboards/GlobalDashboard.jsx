@@ -1,9 +1,14 @@
 /**
  * Dashboard Global de Métricas
  * Muestra KPIs generales del sistema y gráficos de análisis
+ * 
+ * FASE 4 - TAREA 1: Integrado con metricsEngine.js
+ * - Usa computeGlobalMetrics() para cálculos unificados
+ * - Elimina cálculos locales duplicados
+ * - Sincronizado con Auditoría y Historial
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useMetricsWithFallback } from '../../utils/fallbackMetrics';
 import {
@@ -36,6 +41,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui
 import { Progress } from '../ui/progress';
 import { Badge } from '../ui/badge';
 import useMetricsStore from '../../stores/useMetricsStore';
+import { computeGlobalMetrics, formatMetricsForUI } from '../../services/metricsEngine';
+import { useCallStore } from '../../stores';
+import { useSeguimientosStore } from '../../stores/useSeguimientosStore';
+import logger from '../../utils/logger';
 
 const COLORS = {
   'Al día': '#10b981',
@@ -62,11 +71,13 @@ function GlobalDashboard() {
     loading,
     errors,
     initializeListeners,
-    cleanup,
-    getSummaryStats,
-    getTopOperators,
-    getBeneficiariesByStatus
+    cleanup
   } = useMetricsStore();
+  
+  // ⭐ FASE 4: Obtener todos los registros (callData, seguimientos, análisis Excel)
+  // para calcular métricas unificadas con metricsEngine
+  const callData = useCallStore((state) => state.callData) || [];
+  const seguimientos = useSeguimientosStore((state) => state.seguimientos) || [];
   
   // Usar fallback cuando haya errores o no haya datos
   const fallbackMetrics = useMetricsWithFallback();
@@ -78,42 +89,173 @@ function GlobalDashboard() {
     return cleanup; // Limpiar al desmontar
   }, [initializeListeners, cleanup]);
 
-  const summaryStats = shouldUseFallback ? fallbackMetrics.getSummaryStats() : getSummaryStats();
-  const topOperators = shouldUseFallback ? fallbackMetrics.getTopOperators(5) : getTopOperators(5);
-  const urgentBeneficiaries = shouldUseFallback ? fallbackMetrics.getBeneficiariesByStatus('Urgente') : getBeneficiariesByStatus('Urgente');
+  // ⭐ FASE 4 - TAREA 1: Calcular métricas unificadas con metricsEngine
+  const unifiedMetrics = useMemo(() => {
+    // Combinar todos los registros de diferentes fuentes
+    const allRecords = [
+      ...(callData || []),
+      ...(seguimientos || []),
+    ];
+    
+    if (allRecords.length === 0) {
+      logger.warn('[GlobalDashboard] No hay registros para calcular métricas');
+      return null;
+    }
+    
+    try {
+      const metrics = computeGlobalMetrics(allRecords, {
+        includeTopOperators: true,
+        topN: 10,
+        calculateTrends: false
+      });
+      
+      logger.audit('[GlobalDashboard] Métricas unificadas calculadas', {
+        total: metrics.total,
+        exitosas: metrics.exitosas,
+        tasaExito: metrics.tasaExito,
+        operadoras: Object.keys(metrics.porOperadora || {}).length,
+        fechasAnalizadas: Object.keys(metrics.porFecha || {}).length
+      });
+      
+      return metrics;
+    } catch (error) {
+      logger.error('[GlobalDashboard] Error calculando métricas unificadas:', error);
+      return null;
+    }
+  }, [callData, seguimientos]);
+
+  // ⭐ FASE 4: Formatear métricas para UI (con separadores de miles, porcentajes, etc.)
+  const formattedMetrics = useMemo(() => {
+    if (!unifiedMetrics) return null;
+    
+    try {
+      return formatMetricsForUI(unifiedMetrics, 'es-CL');
+    } catch (error) {
+      logger.error('[GlobalDashboard] Error formateando métricas:', error);
+      return unifiedMetrics; // Fallback a métricas sin formatear
+    }
+  }, [unifiedMetrics]);
+
+  // Usar métricas unificadas o fallback
+  const currentMetrics = unifiedMetrics || (shouldUseFallback ? fallbackMetrics.globalMetrics : globalMetrics);
+
+  // ⭐ FASE 4: Summary stats desde metricsEngine (no cálculos locales)
+  const summaryStats = useMemo(() => {
+    if (!currentMetrics) {
+      return shouldUseFallback ? fallbackMetrics.getSummaryStats() : {
+        totalCalls: 0,
+        successfulCalls: 0,
+        failedCalls: 0,
+        successRate: 0,
+        totalDuration: 0,
+        averageDuration: 0,
+        uniqueBeneficiaries: 0,
+        beneficiariesByStatus: {}
+      };
+    }
+    
+    return {
+      totalCalls: currentMetrics.total || 0,
+      successfulCalls: currentMetrics.exitosas || 0,
+      failedCalls: currentMetrics.fallidas || 0,
+      sinIdentificar: currentMetrics.sinIdentificar || 0,
+      successRate: currentMetrics.tasaExito || 0,
+      totalDuration: 0, // TODO: Agregar duración total en metricsEngine
+      averageDuration: currentMetrics.promedios?.duracionPromedio || 0,
+      uniqueBeneficiaries: currentMetrics.beneficiariosUnicos || 0,
+      beneficiariesByStatus: {} // TODO: Agregar clasificación por estado en metricsEngine
+    };
+  }, [currentMetrics, shouldUseFallback, fallbackMetrics]);
+
+  // ⭐ FASE 4: Top operadoras desde metricsEngine
+  const topOperators = useMemo(() => {
+    if (!currentMetrics || !currentMetrics.topOperadoras) {
+      return shouldUseFallback ? fallbackMetrics.getTopOperators(5) : [];
+    }
+    
+    return currentMetrics.topOperadoras.slice(0, 5).map(op => ({
+      nombreOriginal: op.name,
+      totalCalls: op.total,
+      successfulCalls: op.exitosas,
+      successRate: op.tasaExito
+    }));
+  }, [currentMetrics, shouldUseFallback, fallbackMetrics]);
+
+  // Beneficiarios urgentes (mantener lógica existente, pendiente de integración)
+  const urgentBeneficiaries = shouldUseFallback ? fallbackMetrics.getBeneficiariesByStatus('Urgente') : [];
+
   
-  // Usar datos de fallback cuando sea necesario
-  const currentGlobalMetrics = shouldUseFallback ? fallbackMetrics.globalMetrics : globalMetrics;
-
-  // Preparar datos para gráficos
+  // ⭐ FASE 4: Preparar datos para gráficos desde metricsEngine
   const prepareChartData = () => {
-    if (!currentGlobalMetrics) return { dayData: [], hourData: [], statusData: [] };
+    if (!currentMetrics || !currentMetrics.porFecha) {
+      return { dayData: [], hourData: [], statusData: [], operatorData: [] };
+    }
 
-    // Datos por día de la semana
-    const dayData = Object.entries(currentGlobalMetrics.dayDistribution || {}).map(([day, count]) => ({
-      day: DAYS_SPANISH[day.toLowerCase()] || day,
+    // Datos por fecha (para gráfico temporal)
+    const dateData = Object.entries(currentMetrics.porFecha)
+      .map(([fecha, metrics]) => ({
+        fecha: fecha,
+        llamadas: metrics.total,
+        exitosas: metrics.exitosas,
+        fallidas: metrics.fallidas,
+        tasaExito: metrics.tasaExito
+      }))
+      .sort((a, b) => new Date(a.fecha) - new Date(b.fecha))
+      .slice(-30); // Últimos 30 días
+
+    // Datos por operadora (para gráfico de barras)
+    const operatorData = Object.entries(currentMetrics.porOperadora || {})
+      .map(([name, metrics]) => ({
+        operadora: name,
+        total: metrics.total,
+        exitosas: metrics.exitosas,
+        fallidas: metrics.fallidas,
+        tasaExito: metrics.tasaExito
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10); // Top 10
+
+    // Datos por estado (para gráfico de torta)
+    const statusData = [
+      { 
+        name: 'Exitosas', 
+        value: currentMetrics.exitosas || 0, 
+        color: COLORS['Al día'] || '#10b981'
+      },
+      { 
+        name: 'Fallidas', 
+        value: currentMetrics.fallidas || 0, 
+        color: COLORS['Urgente'] || '#ef4444' 
+      },
+      { 
+        name: 'Sin Identificar', 
+        value: currentMetrics.sinIdentificar || 0, 
+        color: COLORS['Pendiente'] || '#f59e0b' 
+      }
+    ].filter(item => item.value > 0);
+
+    // Datos por día de la semana (agrupar por día)
+    const dayDistribution = {};
+    Object.entries(currentMetrics.porFecha || {}).forEach(([fecha, metrics]) => {
+      const date = new Date(fecha);
+      const dayName = date.toLocaleDateString('es-ES', { weekday: 'long' });
+      const dayKey = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+      
+      if (!dayDistribution[dayKey]) {
+        dayDistribution[dayKey] = 0;
+      }
+      dayDistribution[dayKey] += metrics.total;
+    });
+
+    const dayData = Object.entries(dayDistribution).map(([day, count]) => ({
+      day,
       llamadas: count
     }));
 
-    // Datos por hora del día
-    const hourData = Object.entries(currentGlobalMetrics.hourDistribution || {})
-      .map(([hour, count]) => ({
-        hora: `${hour}:00`,
-        llamadas: count
-      }))
-      .sort((a, b) => parseInt(a.hora) - parseInt(b.hora));
-
-    // Datos por estado de beneficiarios
-    const statusData = Object.entries(summaryStats.beneficiariesByStatus).map(([status, count]) => ({
-      name: status,
-      value: count,
-      color: COLORS[status] || '#8884d8'
-    }));
-
-    return { dayData, hourData, statusData };
+    return { dayData, dateData, hourData: [], statusData, operatorData };
   };
 
-  const { dayData, hourData, statusData } = prepareChartData();
+  const { dayData, dateData, statusData, operatorData } = prepareChartData();
 
   const formatDuration = (minutes) => {
     const hours = Math.floor(minutes / 60);
@@ -196,10 +338,15 @@ function GlobalDashboard() {
             : "Resumen general de métricas y análisis de llamadas"
           }
         </p>
-        {currentGlobalMetrics?.lastUpdated && (
+        {currentMetrics?.fechaCalculo && (
           <p className="text-xs text-muted-foreground mt-1">
-            Última actualización: {new Date(currentGlobalMetrics.lastUpdated).toLocaleString('es-ES')}
+            Última actualización: {new Date(currentMetrics.fechaCalculo).toLocaleString('es-ES')}
           </p>
+        )}
+        {unifiedMetrics && (
+          <Badge variant="outline" className="ml-2 text-blue-600 border-blue-200">
+            ⚡ Métricas Unificadas (Fase 4)
+          </Badge>
         )}
       </motion.div>
 
@@ -207,29 +354,29 @@ function GlobalDashboard() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <KPICard
           title="Total de Llamadas"
-          value={summaryStats.totalCalls.toLocaleString()}
+          value={(formattedMetrics?.totalFormatted || summaryStats.totalCalls).toLocaleString()}
           subtitle="Llamadas registradas"
           icon={PhoneCall}
           color="blue"
         />
         <KPICard
           title="Tasa de Éxito"
-          value={formatPercentage(summaryStats.successRate)}
-          subtitle={`${globalMetrics?.successfulCalls || 0} llamadas exitosas`}
+          value={formattedMetrics?.tasaExitoFormatted || formatPercentage(summaryStats.successRate)}
+          subtitle={`${(formattedMetrics?.exitosasFormatted || summaryStats.successfulCalls).toLocaleString()} llamadas exitosas`}
           icon={CheckCircle}
           color="green"
         />
         <KPICard
-          title="Duración Total"
-          value={formatDuration(globalMetrics?.totalDuration || 0)}
-          subtitle={`Promedio: ${formatDuration(globalMetrics?.averageDuration || 0)}`}
-          icon={Clock}
+          title="Beneficiarios Únicos"
+          value={(formattedMetrics?.beneficiariosUnicosFormatted || summaryStats.uniqueBeneficiaries).toLocaleString()}
+          subtitle={`${(formattedMetrics?.telefonosUnicosFormatted || summaryStats.uniqueBeneficiaries).toLocaleString()} teléfonos únicos`}
+          icon={Users}
           color="purple"
         />
         <KPICard
-          title="Teleoperadoras"
-          value={summaryStats.totalOperators}
-          subtitle="Activas en el sistema"
+          title="Teleoperadoras Activas"
+          value={Object.keys(currentMetrics?.porOperadora || {}).length}
+          subtitle="Con llamadas registradas"
           icon={Users}
           color="orange"
         />

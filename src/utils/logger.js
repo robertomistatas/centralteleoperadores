@@ -124,6 +124,21 @@ class Logger {
   }
 
   /**
+   * Log para auditoría de operaciones críticas
+   * Siempre se registra independientemente del nivel de log
+   */
+  audit(operation, details = {}) {
+    const timestamp = new Date().toISOString();
+    const logEntry = {
+      timestamp,
+      operation,
+      ...details
+    };
+    console.log('🔒 [AUDIT]', logEntry);
+    return logEntry;
+  }
+
+  /**
    * Log con timestamp
    */
   time(label) {
