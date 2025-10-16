@@ -19,15 +19,15 @@
  * @module metricsEngine
  */
 
-import logger from '../utils/logger';
+import logger from '../utils/logger.js';
 import {
   normalizeRecord,
   normalizeRecords,
   groupByOperator,
   groupByResult,
   groupByDate
-} from '../utils/dataNormalizer';
-import { measurePerformance } from '../utils/performanceMonitor';
+} from '../utils/dataNormalizer.js';
+import { measurePerformance } from '../utils/performanceMonitor.js';
 
 /**
  * Calcula métricas globales consolidadas

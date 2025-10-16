@@ -16,12 +16,12 @@
  * @version 1.0.0
  */
 
-import logger from './logger';
+import logger from './logger.js';
 
 /**
  * Configuración de umbrales de performance
  */
-const THRESHOLDS = {
+export const THRESHOLDS = {
   SLOW_OPERATION: 500, // ms - Operaciones que superan este tiempo se consideran lentas
   MEMORY_WARNING: 0.75, // 75% de uso de memoria genera advertencia
   MEMORY_CRITICAL: 0.90, // 90% de uso de memoria es crítico

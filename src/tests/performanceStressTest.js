@@ -28,10 +28,10 @@ import {
   getPerformanceSummary,
   clearMetrics,
   THRESHOLDS
-} from '../utils/performanceMonitor';
-import { computeGlobalMetrics } from '../services/metricsEngine';
-import { normalizeRecords } from '../utils/dataNormalizer';
-import logger from '../utils/logger';
+} from '../utils/performanceMonitor.js';
+import { computeGlobalMetrics } from '../services/metricsEngine.js';
+import { normalizeRecords } from '../utils/dataNormalizer.js';
+import logger from '../utils/logger.js';
 
 /**
  * Configuración del test de estrés

@@ -15,7 +15,7 @@
  * - telefono / fono / phone
  */
 
-import logger from './logger';
+import logger from './logger.js';
 
 /**
  * Limpia y normaliza números telefónicos
