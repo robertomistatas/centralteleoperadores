@@ -48,6 +48,16 @@ const HistorialSeguimientos = () => {
   const assignments = getAllAssignments();
   const seguimientos = useSeguimientosStore((state) => state.seguimientos);
 
+  // ⭐ RC1 FIX: Logging de sincronización para debugging
+  useEffect(() => {
+    logger.info('[HistorialSeguimientos] 📊 Datos actualizados', {
+      processedData: processedData?.length || 0,
+      seguimientos: seguimientos?.length || 0,
+      assignments: assignments?.length || 0,
+      timestamp: new Date().toISOString()
+    });
+  }, [processedData, seguimientos, assignments]);
+
   /**
    * ⭐ FASE 4 - TAREA 3: Normalizar y consolidar datos desde todas las fuentes
    * Usa dataNormalizer para homogeneizar campos y valores
@@ -104,6 +114,23 @@ const HistorialSeguimientos = () => {
   }, [normalizedData]);
 
   /**
+   * ⭐ RC1 CRÍTICO: Parser de fechas UTC para evitar problemas de zona horaria
+   * Convierte string YYYY-MM-DD a Date en UTC (mediodía para evitar edge cases)
+   */
+  const parseDateUTC = (dateString) => {
+    if (!dateString) return null;
+    try {
+      const [year, month, day] = dateString.split('-').map(Number);
+      if (!year || !month || !day) return null;
+      // Usar mediodía UTC para evitar problemas de zona horaria
+      return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+    } catch (error) {
+      logger.error('[HistorialSeguimientos] Error parseando fecha', { dateString, error });
+      return null;
+    }
+  };
+
+  /**
    * ⭐ FASE 4 - CORRECCIÓN: Calcula el estado de seguimiento de cada beneficiario
    * Usa datos normalizados y corrige campos incoherentes
    */
@@ -112,7 +139,15 @@ const HistorialSeguimientos = () => {
       return [];
     }
 
+    // ⭐ RC1 CRÍTICO: Usar fecha UTC a mediodía para comparaciones consistentes
     const now = new Date();
+    const nowUTC = new Date(Date.UTC(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      12, 0, 0
+    ));
+    
     const beneficiaryMap = new Map();
 
     // Crear un mapa de asignaciones para lookup rápido
@@ -150,8 +185,8 @@ const HistorialSeguimientos = () => {
       // Agregar todas las llamadas
       beneficiaryData.calls.push(record);
 
-      // ⭐ CORRECCIÓN: Usar campo normalizado 'fecha' (YYYY-MM-DD)
-      const callDate = record.fecha ? new Date(record.fecha) : null;
+      // ⭐ RC1 CRÍTICO: Usar parser UTC para evitar problemas de zona horaria
+      const callDate = record.fecha ? parseDateUTC(record.fecha) : null;
 
       // ⭐ CORRECCIÓN: Verificar si es exitosa usando resultado normalizado
       const isSuccessful = record.resultado === 'exitosa';
@@ -198,14 +233,26 @@ const HistorialSeguimientos = () => {
       
       const commune = assignment?.commune || assignment?.comuna || 'N/A';
 
-      // ⭐ CORRECCIÓN: Calcular días desde la última llamada exitosa
+      // ⭐ RC1 CRÍTICO: Calcular días desde la última llamada exitosa
+      // PROTECCIÓN: Math.max(0, ...) evita días negativos por fechas futuras
       let daysSinceLastSuccess = null;
       let status = 'urgente'; // Por defecto urgente
       let statusReason = 'Sin llamadas exitosas registradas';
       
       if (data.lastSuccessfulCall) {
-        const diffTime = now - data.lastSuccessfulCall;
-        daysSinceLastSuccess = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+        const diffTime = nowUTC - data.lastSuccessfulCall;
+        // ⭐ PROTECCIÓN: Nunca mostrar días negativos
+        daysSinceLastSuccess = Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
+
+        // Logging de debugging para fechas futuras
+        if (diffTime < 0) {
+          logger.warn('[HistorialSeguimientos] ⚠️ Fecha futura detectada', {
+            beneficiario: data.beneficiary,
+            fechaLlamada: data.lastSuccessfulCall.toISOString(),
+            fechaActual: nowUTC.toISOString(),
+            diferenciaDias: Math.floor(diffTime / (1000 * 60 * 60 * 24))
+          });
+        }
 
         // Clasificación según días desde última llamada exitosa
         if (daysSinceLastSuccess <= 15) {
@@ -220,8 +267,8 @@ const HistorialSeguimientos = () => {
         }
       } else if (data.lastCallDate) {
         // Tiene llamadas pero ninguna exitosa
-        const diffTime = now - data.lastCallDate;
-        const daysSinceLastCall = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+        const diffTime = nowUTC - data.lastCallDate;
+        const daysSinceLastCall = Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
         statusReason = `${data.calls.length} llamada${data.calls.length !== 1 ? 's' : ''} realizadas sin éxito. Última hace ${daysSinceLastCall} día${daysSinceLastCall !== 1 ? 's' : ''}`;
       }
 
@@ -323,14 +370,40 @@ const HistorialSeguimientos = () => {
               Clasificación de beneficiarios por frecuencia y estado de contacto
             </p>
             {globalMetrics && (
-              <div className="mt-2 flex items-center gap-2">
-                <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
-                  <Zap className="w-4 h-4 mr-1" />
-                  Métricas Unificadas (Fase 4)
-                </span>
-                <span className="text-sm text-gray-600">
-                  {stats.totalLlamadas?.toLocaleString()} llamadas • {stats.tasaExito?.toFixed(1)}% éxito
-                </span>
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
+                    <Zap className="w-4 h-4 mr-1" />
+                    Métricas Unificadas (Fase 4)
+                  </span>
+                </div>
+                {/* ⭐ RC1 CRÍTICO: Separar métricas de LLAMADAS vs BENEFICIARIOS */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Phone className="w-4 h-4 text-blue-600" />
+                      <span className="text-sm font-bold text-blue-900">Métricas de Llamadas</span>
+                    </div>
+                    <p className="text-xs text-blue-700">
+                      <strong>{stats.totalLlamadas?.toLocaleString()}</strong> registros total
+                      <br />
+                      <strong>{stats.llamadasExitosas?.toLocaleString()}</strong> exitosas ({stats.tasaExito?.toFixed(1)}% éxito)
+                      <br />
+                      <strong>{stats.llamadasFallidas?.toLocaleString()}</strong> fallidas
+                    </p>
+                  </div>
+                  <div className="bg-teal-50 border border-teal-200 rounded-lg p-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <User className="w-4 h-4 text-teal-600" />
+                      <span className="text-sm font-bold text-teal-900">Métricas de Beneficiarios</span>
+                    </div>
+                    <p className="text-xs text-teal-700">
+                      <strong>{stats.total}</strong> beneficiarios únicos
+                      <br />
+                      <strong>{stats.alDia}</strong> al día • <strong>{stats.pendientes}</strong> pendientes • <strong>{stats.urgentes}</strong> urgentes
+                    </p>
+                  </div>
+                </div>
               </div>
             )}
           </div>

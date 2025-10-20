@@ -1612,60 +1612,8 @@ const TeleasistenciaApp = () => {
   };
 
   // OPTIMIZACIÓN: Función de análisis simplificada
-  const analyzeCallDataLegacy = (data) => {
-    if (!data || data.length === 0) return;
-    
-    const successfulCalls = data.filter(call => call.result === 'Llamado exitoso');
-    const failedCalls = data.filter(call => call.result !== 'Llamado exitoso');
-    const uniqueBeneficiaries = new Set(data.map(call => call.beneficiary)).size;
-    
-    // Actualizar métricas de manera eficiente
-    setDashboardMetrics(prev => ({
-      ...prev,
-      totalCalls: data.length,
-      successfulCalls: successfulCalls.length,
-      failedCalls: failedCalls.length,
-      beneficiaries: uniqueBeneficiaries,
-      activeAssignments: assignments.length,
-      operators: operators.length,
-      protocolCompliance: data.length > 0 ? Math.round((successfulCalls.length / data.length) * 100) : 0,
-      pendingFollowUps: failedCalls.length
-    }));
-
-    // Análisis simplificado por operadora
-    const operatorAnalysis = {};
-    
-    operators.forEach(op => {
-      operatorAnalysis[op.name] = {
-        operator: op.name,
-        totalCalls: 0,
-        totalMinutes: 0,
-        avgDuration: 0
-      };
-    });
-    
-    // Procesar llamadas de manera optimizada
-    data.forEach(call => {
-      const assignment = assignments.find(a => a.beneficiary === call.beneficiary);
-      if (assignment && operatorAnalysis[assignment.operator]) {
-        operatorAnalysis[assignment.operator].totalCalls++;
-        const duration = parseInt(call.duration) || 0;
-        operatorAnalysis[assignment.operator].totalMinutes += duration / 60;
-      }
-    });
-
-    // Calcular promedios
-    Object.values(operatorAnalysis).forEach(op => {
-      op.avgDuration = op.totalCalls > 0 ? Math.round(op.totalMinutes / op.totalCalls) : 0;
-      op.totalMinutes = Math.round(op.totalMinutes);
-    });
-
-    setOperatorMetrics(Object.values(operatorAnalysis));
-    generateHourlyDistribution(data);
-  };
-
-  // ✅ ELIMINADO: generateFollowUpHistory ahora usa datos de Zustand directamente
-  // La función getFollowUpData en Zustand ya maneja el formateo de fechas correctamente
+  // ✅ FASE 5 - Código legacy eliminado: analyzeCallDataLegacy
+  // Reemplazado por metricsEngine y Zustand stores
 
   // Generar distribución horaria basada en datos reales
   const generateHourlyDistribution = (callData) => {
@@ -1964,43 +1912,7 @@ const TeleasistenciaApp = () => {
                 🔄 Sincronizar
               </button>
             )}
-            {/* BOTÓN DEBUG TEMPORAL */}
-            {effectiveCallData.length > 0 && (
-              <>
-                <button
-                  onClick={() => {
-                    console.log('🔧 DEBUG: Forzando re-análisis...');
-                    console.log('📊 Datos antes del re-análisis:', zustandCallMetrics);
-                    forceReanalysis();
-                  }}
-                  className="px-3 py-1 text-xs bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
-                  title="Forzar re-análisis de datos"
-                >
-                  🔧 Re-analizar
-                </button>
-                <button
-                  onClick={() => {
-                    console.log('🔍 DIAGNÓSTICO: Analizando datos reales...');
-                    const callData = useCallStore.getState().callData;
-                    if (callData && callData.length > 0) {
-                      if (window.analyzeRealData) {
-                        window.analyzeRealData(callData);
-                      } else {
-                        console.log('⚠️ Función de diagnóstico no disponible');
-                        console.log('Datos disponibles:', callData.length, 'llamadas');
-                        console.log('Muestra de datos:', callData.slice(0, 3));
-                      }
-                    } else {
-                      console.log('❌ No hay datos disponibles para analizar');
-                    }
-                  }}
-                  className="px-3 py-1 text-xs bg-orange-500 text-white rounded-md hover:bg-orange-600 transition-colors"
-                  title="Diagnosticar datos reales del Excel (ver consola)"
-                >
-                  🔍 Diagnosticar
-                </button>
-              </>
-            )}
+            {/* FASE 5: Botones de debug eliminados - usar DevTools en su lugar */}
           </div>
         </div>
       </div>

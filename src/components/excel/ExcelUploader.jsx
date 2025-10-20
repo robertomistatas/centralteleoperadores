@@ -22,6 +22,7 @@ import { useState, useRef, useCallback } from 'react';
 import { Upload, FileSpreadsheet, AlertCircle, CheckCircle, XCircle, Eye, Download, RefreshCw, Save } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import useExcelStore from '../../stores/useExcelStore';
+import useCallStore from '../../stores/useCallStore';
 import useUIStore from '../../stores/useUIStore';
 import { parseAndNormalizeExcel, generateFileHash, validateExcelFile } from '../../services/excelProcessor';
 import { exportFullAnalysis, validateExport } from '../../utils/exportUtils';
@@ -36,7 +37,7 @@ const ExcelUploader = () => {
   const [filterClasificacion, setFilterClasificacion] = useState('all');
   const [isSaving, setIsSaving] = useState(false);
   
-  // Store
+  // Stores
   const {
     file,
     fullData,
@@ -58,6 +59,9 @@ const ExcelUploader = () => {
     isSafeModeEnabled,
     persistToFirestore
   } = useExcelStore();
+  
+  // ⭐ CRÍTICO: Store para sincronización con Historial de Seguimientos
+  const setCallData = useCallStore((state) => state.setCallData);
   
   // UI Store
   const { showSuccess, showError, showWarning, showInfo } = useUIStore();
@@ -111,6 +115,41 @@ const ExcelUploader = () => {
       setLoading(true, 'analyzing');
       processAnalysisResult(result);
       
+      // ⭐ CORRECCIÓN CRÍTICA RC1: Sincronizar con CallStore para Historial de Seguimientos
+      logger.info('[ExcelUploader] 🔄 Sincronizando datos con CallStore', {
+        registros: result.data.length,
+        exitosas: result.resumen.exitosas,
+        fallidas: result.resumen.fallidas
+      });
+      
+      setCallData(result.data, 'excel');
+      
+      logger.audit('[ExcelUploader] ✅ Sincronización completada - Historial de Seguimientos actualizado');
+      
+      // ⭐ RC1 CRÍTICO: Validar fechas futuras
+      const now = new Date();
+      const futureDates = result.data.filter(record => {
+        if (!record.fecha) return false;
+        try {
+          const [year, month, day] = record.fecha.split('-').map(Number);
+          const recordDate = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+          return recordDate > now;
+        } catch {
+          return false;
+        }
+      });
+      
+      if (futureDates.length > 0) {
+        logger.warn('[ExcelUploader] ⚠️ Fechas futuras detectadas', {
+          cantidad: futureDates.length,
+          ejemplos: futureDates.slice(0, 3).map(r => ({
+            beneficiario: r.beneficiario,
+            fecha: r.fecha
+          }))
+        });
+        showWarning(`⚠️ Detectadas ${futureDates.length} fechas futuras en el Excel. Esto causará días negativos en el historial. Verifique los datos.`);
+      }
+      
       // Mostrar resultados
       if (result.warnings.length > 0) {
         const warningMessage = result.warnings[0].message;
@@ -133,7 +172,7 @@ const ExcelUploader = () => {
       setError(err.message);
       showError(`❌ Error: ${err.message}`);
     }
-  }, [clear, setFile, setLoading, setError, processAnalysisResult, isFileProcessed, showSuccess, showError, showWarning, showInfo, safeMode]);
+  }, [clear, setFile, setLoading, setError, processAnalysisResult, isFileProcessed, setCallData, showSuccess, showError, showWarning, showInfo, safeMode]);
   
   // Manejador de input
   const handleInputChange = (e) => {

@@ -114,6 +114,8 @@ function normalizePhone(phone) {
 
 /**
  * Convierte una fecha de Excel a formato ISO (YYYY-MM-DD)
+ * ⭐ RC1 CRÍTICO: Maneja formato chileno DD-MM-YYYY y seriales de Excel
+ * 
  * @param {any} dateValue - Valor de fecha (serial, string, Date)
  * @returns {string} - Fecha en formato ISO
  */
@@ -123,33 +125,84 @@ function normalizeDate(dateValue) {
   try {
     let date;
     
-    // Si es formato chileno DD-MM-YYYY o DD/MM/YYYY
+    // ⭐ CASO 1: String en formato chileno DD-MM-YYYY o DD/MM/YYYY
     if (typeof dateValue === 'string' && /^\d{1,2}[-/]\d{1,2}[-/]\d{4}$/.test(dateValue)) {
       const parts = dateValue.split(/[-/]/);
-      const day = parseInt(parts[0]);
-      const month = parseInt(parts[1]) - 1; // JS months are 0-indexed
-      const year = parseInt(parts[2]);
-      date = new Date(year, month, day);
+      const day = parseInt(parts[0], 10);    // Día primero (formato chileno)
+      const month = parseInt(parts[1], 10);  // Mes segundo
+      const year = parseInt(parts[2], 10);   // Año tercero
+      
+      logger.debug('[excelProcessor] Fecha chilena detectada', { 
+        original: dateValue, 
+        parsed: { day, month, year } 
+      });
+      
+      // Validar componentes
+      if (day < 1 || day > 31 || month < 1 || month > 12 || year < 1900) {
+        logger.warn('[excelProcessor] Fecha inválida', { dateValue, day, month, year });
+        return String(dateValue);
+      }
+      
+      // ⭐ CRÍTICO: Crear fecha en UTC (mediodía para evitar edge cases)
+      date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
     }
-    // Si es número (Excel serial date)
+    
+    // ⭐ CASO 2: Número serial de Excel
     else if (typeof dateValue === 'number') {
-      date = new Date((dateValue - 25569) * 86400 * 1000);
+      // Excel serial date: días desde 1900-01-01 (con bug de año bisiesto)
+      // Convertir a timestamp Unix
+      const timestamp = (dateValue - 25569) * 86400 * 1000;
+      date = new Date(timestamp);
+      
+      logger.debug('[excelProcessor] Serial de Excel detectado', { 
+        serial: dateValue, 
+        timestamp,
+        parsed: date.toISOString()
+      });
     }
-    // Intentar parsear como fecha estándar
-    else {
+    
+    // ⭐ CASO 3: String en formato ISO o americano
+    else if (typeof dateValue === 'string') {
+      // Intentar parsear como fecha estándar
       date = new Date(dateValue);
+      
+      logger.debug('[excelProcessor] String de fecha genérico', { 
+        original: dateValue,
+        parsed: date.toISOString()
+      });
     }
     
+    // ⭐ CASO 4: Ya es un objeto Date
+    else if (dateValue instanceof Date) {
+      date = dateValue;
+    }
+    
+    // Validar y retornar en formato ISO
     if (date && !isNaN(date.getTime())) {
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
+      // ⭐ RC1 CRÍTICO: Usar UTC para evitar cambios de día por zona horaria
+      const year = date.getUTCFullYear();
+      const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(date.getUTCDate()).padStart(2, '0');
+      const result = `${year}-${month}-${day}`;
+      
+      logger.debug('[excelProcessor] Fecha normalizada', { 
+        original: dateValue,
+        resultado: result
+      });
+      
+      return result;
     }
     
+    // Si no se pudo parsear, retornar como string
+    logger.warn('[excelProcessor] No se pudo parsear fecha', { dateValue });
     return String(dateValue);
+    
   } catch (error) {
-    logger.warn('[excelProcessor] Error normalizando fecha', { dateValue, error: error.message });
+    logger.error('[excelProcessor] Error normalizando fecha', { 
+      dateValue, 
+      error: error.message,
+      stack: error.stack
+    });
     return String(dateValue);
   }
 }
@@ -190,11 +243,14 @@ export async function parseAndNormalizeExcel(file) {
   try {
     // Leer archivo
     const arrayBuffer = await file.arrayBuffer();
+    
+    // ⭐ RC1 CRÍTICO: Configurar lectura para formato chileno
     const workbook = XLSX.read(arrayBuffer, { 
       type: 'array',
-      cellDates: true,
-      cellNF: false,
-      cellText: false
+      cellDates: true,      // Convertir números seriales a Date objects
+      cellNF: false,        // No usar formatos numéricos
+      cellText: false,      // No forzar a texto
+      dateNF: 'dd-mm-yyyy'  // Formato de fecha chileno
     });
     
     // Tomar la primera hoja
@@ -203,11 +259,12 @@ export async function parseAndNormalizeExcel(file) {
     
     logger.info('[excelProcessor] Hoja leída', { sheetName: firstSheetName });
     
-    // Convertir a JSON
+    // ⭐ RC1 CRÍTICO: Convertir manteniendo tipos de datos originales
     const rawData = XLSX.utils.sheet_to_json(worksheet, { 
-      raw: false,
+      raw: true,            // ⭐ CAMBIO: Mantener tipos originales (números, fechas)
       defval: '',
-      blankrows: false
+      blankrows: false,
+      dateNF: 'dd-mm-yyyy'  // Formato de fecha para parsing
     });
     
     if (!rawData || rawData.length === 0) {

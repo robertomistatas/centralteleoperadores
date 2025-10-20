@@ -451,9 +451,9 @@ function GlobalDashboard() {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={hourData}>
+                <LineChart data={dateData}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="hora" />
+                  <XAxis dataKey="fecha" />
                   <YAxis />
                   <Tooltip />
                   <Line 

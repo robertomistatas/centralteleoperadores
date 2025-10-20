@@ -2,21 +2,41 @@
 // Facilita las importaciones y mantiene el código organizado
 
 // ===== STORES REFACTORIZADOS (v2) =====
-export { default as useUIStore } from './useUIStore';
-export { default as useAuthStore } from './useAuthStore';
-export { default as useAsignationsStore } from './useAsignationsStore';
-export { default as useExcelStore } from './useExcelStore'; // ⭐ NUEVO: Store para análisis de Excel
+import useUIStore from './useUIStore';
+import useAuthStore from './useAuthStore';
+import useAsignationsStore from './useAsignationsStore';
+import useExcelStore from './useExcelStore';
 
 // ===== STORES EXISTENTES (compatibles) =====
-export { default as useUserStore } from './useUserStore';
-export { default as useCallStore } from './useCallStore';
-export { default as useAppStore } from './useAppStore';
-export { default as useBeneficiaryStore } from './useBeneficiaryStore';
-export { default as useUserManagementStore } from './useUserManagementStore';
-export { useSeguimientosStore } from './useSeguimientosStore'; // ACTUALIZADO con firestoreService
-export { useGestionesStore, GESTION_ESTADOS, ESTADO_COLORS } from './useGestionesStore';
-export { default as useMetricsStore } from './useMetricsStore'; // Mantener el existente
-export { default as useDashboardStore } from './useDashboardStore'; // ✅ Store para persistencia de dashboard
+import useUserStore from './useUserStore';
+import useCallStore from './useCallStore';
+import useAppStore from './useAppStore';
+import useBeneficiaryStore from './useBeneficiaryStore';
+import useUserManagementStore from './useUserManagementStore';
+import useMetricsStore from './useMetricsStore';
+import useDashboardStore from './useDashboardStore';
+
+import { useSeguimientosStore } from './useSeguimientosStore';
+import { useGestionesStore, GESTION_ESTADOS, ESTADO_COLORS } from './useGestionesStore';
+
+// Re-exportar todos los stores
+export { 
+  useUIStore, 
+  useAuthStore, 
+  useAsignationsStore, 
+  useExcelStore,
+  useUserStore,
+  useCallStore,
+  useAppStore,
+  useBeneficiaryStore,
+  useUserManagementStore,
+  useSeguimientosStore,
+  useGestionesStore,
+  useMetricsStore,
+  useDashboardStore,
+  GESTION_ESTADOS,
+  ESTADO_COLORS
+};
 
 // Exportar hooks combinados útiles
 export const useStores = () => ({

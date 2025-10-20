@@ -63,6 +63,8 @@ const useMetricsStore = create(
       console.log('⚠️ Listeners de métricas deshabilitados hasta que la BD esté inicializada');
       return; // Salir temprano para evitar errores
       
+      // NOTA: El código siguiente está comentado intencionalmente hasta que Firebase esté configurado
+      /* 
       const state = get();
       
       // Limpiar listeners existentes
@@ -278,6 +280,7 @@ const useMetricsStore = create(
       
       // Guardar unsubscribers
       set({ unsubscribers });
+      */
     },
     
     /**
