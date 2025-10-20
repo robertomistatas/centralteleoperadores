@@ -19,7 +19,9 @@ import logger from './logger.js';
 
 /**
  * Limpia y normaliza números telefónicos
- * Elimina espacios, guiones, paréntesis y prefijos internacionales
+ * Elimina espacios, guiones, paréntesis, comillas y prefijos internacionales
+ * 
+ * ⭐ RC1: Maneja comillas simples de Excel ('099353003)
  * 
  * @param {string} phone - Número telefónico sin normalizar
  * @returns {string} Número limpio (solo dígitos)
@@ -27,8 +29,11 @@ import logger from './logger.js';
 export const cleanPhone = (phone = '') => {
   if (!phone || typeof phone !== 'string') return '';
   
+  // ⭐ RC1: Eliminar comillas simples de Excel
+  let cleaned = phone.replace(/^'/, '');
+  
   // Eliminar espacios, guiones, paréntesis, puntos
-  let cleaned = phone.replace(/[\s\-().\[\]]/g, '');
+  cleaned = cleaned.replace(/[\s\-().\[\]]/g, '');
   
   // Eliminar prefijos internacionales comunes (+56, 56, +569)
   cleaned = cleaned.replace(/^\+?56/, '');
@@ -104,9 +109,10 @@ export const normalizeCallResult = (result = '') => {
   
   const normalized = result.toLowerCase().trim();
   
-  // Patrones de éxito
+  // ⭐ CORRECCIÓN CRÍTICA RC1: Patrones de éxito (incluye "Llamado exitoso" del Excel)
   const successPatterns = [
     /^exitos?a?s?$/,
+    /llamad[oa]\s*exitos?a?/i,     // ⭐ NUEVO: "Llamado exitoso", "Llamada exitosa"
     /completad[oa]/,
     /contact[oa]/,
     /^si$/,
@@ -118,6 +124,7 @@ export const normalizeCallResult = (result = '') => {
   // Patrones de falla
   const failurePatterns = [
     /fallid[oa]/,
+    /llamad[oa]\s*fallid[oa]/i,    // ⭐ NUEVO: "Llamado fallido", "Llamada fallida"
     /no\s*contesta/,
     /no\s*contesto/,
     /rechaza/,
@@ -147,6 +154,8 @@ export const normalizeCallResult = (result = '') => {
  * Normaliza fecha a formato ISO string
  * Acepta: Date object, timestamp, string ISO, DD/MM/YYYY, etc.
  * 
+ * ⭐ RC1 CRÍTICO: Usa UTC para evitar problemas de zona horaria
+ * 
  * @param {any} date - Fecha en cualquier formato
  * @returns {string} Fecha en formato ISO (YYYY-MM-DD)
  */
@@ -156,32 +165,51 @@ export const normalizeDate = (date) => {
   try {
     // Si ya es un Date válido
     if (date instanceof Date && !isNaN(date)) {
-      return date.toISOString().split('T')[0];
+      // ⭐ RC1 CRÍTICO: Usar UTC para evitar cambios de día por zona horaria
+      const year = date.getUTCFullYear();
+      const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(date.getUTCDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
     }
     
     // Si es un timestamp de Firestore
     if (date.seconds) {
-      return new Date(date.seconds * 1000).toISOString().split('T')[0];
+      const d = new Date(date.seconds * 1000);
+      const year = d.getUTCFullYear();
+      const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(d.getUTCDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
     }
     
     // Si es un string
     if (typeof date === 'string') {
-      // Formato DD/MM/YYYY
-      if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(date)) {
-        const [day, month, year] = date.split('/');
-        return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+      // Formato DD/MM/YYYY o DD-MM-YYYY
+      if (/^\d{1,2}[/-]\d{1,2}[/-]\d{4}$/.test(date)) {
+        const parts = date.split(/[/-]/);
+        const day = parseInt(parts[0]);
+        const month = parseInt(parts[1]);
+        const year = parseInt(parts[2]);
+        // ⭐ RC1 CRÍTICO: Crear fecha en UTC
+        return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       }
       
       // Formato ISO o parseable
       const parsed = new Date(date);
       if (!isNaN(parsed)) {
-        return parsed.toISOString().split('T')[0];
+        const year = parsed.getUTCFullYear();
+        const month = String(parsed.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(parsed.getUTCDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
       }
     }
     
     // Si es un número (timestamp)
     if (typeof date === 'number') {
-      return new Date(date).toISOString().split('T')[0];
+      const d = new Date(date);
+      const year = d.getUTCFullYear();
+      const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(d.getUTCDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
     }
     
     return '';
