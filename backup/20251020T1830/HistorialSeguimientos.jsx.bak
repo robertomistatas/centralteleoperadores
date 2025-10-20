@@ -36,7 +36,6 @@ import { useAppStore } from '../../stores';
 import { useSeguimientosStore } from '../../stores/useSeguimientosStore';
 import { normalizeRecords, normalizeCallResult, normalizeBeneficiary } from '../../utils/dataNormalizer';
 import { computeGlobalMetrics } from '../../services/metricsEngine';
-import { getDisplayOperatorName, isCallResult } from '../../utils/operatorHelpers';
 import logger from '../../utils/logger';
 
 const HistorialSeguimientos = () => {
@@ -209,20 +208,9 @@ const HistorialSeguimientos = () => {
         }
       }
 
-      // ⚠️ BUGFIX: Actualizar nombre de operadora solo si es válido
-      // Guard rail: Detectar y registrar si se intenta usar un resultado como operadora
+      // ⭐ CORRECCIÓN: Actualizar nombre de operadora si está disponible
       if (record.operatorName && !beneficiaryData.operatorName) {
-        if (isCallResult(record.operatorName)) {
-          logger.warn('[HistorialSeguimientos] ⚠️ Detectado resultado de llamada en operatorName', {
-            beneficiary: beneficiaryName,
-            operatorName: record.operatorName,
-            resultado: record.resultado,
-            rowIndex: record._rowIndex || 'unknown'
-          });
-          // NO asignar el operatorName si es un resultado
-        } else {
-          beneficiaryData.operatorName = record.operatorName;
-        }
+        beneficiaryData.operatorName = record.operatorName;
       }
     });
 
@@ -230,22 +218,12 @@ const HistorialSeguimientos = () => {
     const result = Array.from(beneficiaryMap.values()).map(data => {
       const assignment = assignmentMap.get(data.beneficiary.trim().toLowerCase());
       
-      // ⚠️ BUGFIX CRÍTICO: Usar getDisplayOperatorName para obtener nombre correcto
-      // Esto evita que "Llamado exitoso" aparezca como nombre de teleoperadora
-      const operatorName = getDisplayOperatorName(
-        { assignedOperatorName: data.operatorName }, // beneficiary data
-        { operatorName: data.operatorName },         // record data
-        assignment                                    // assignment data
-      );
-      
-      // 🔍 AUDITORÍA: Log cuando se corrija un caso problemático
-      if (data.operatorName && isCallResult(data.operatorName)) {
-        logger.audit('[HistorialSeguimientos] ✅ Corregido resultado en operatorName', {
-          beneficiary: data.beneficiary,
-          operatorNameOriginal: data.operatorName,
-          operatorNameCorregido: operatorName
-        });
-      }
+      // ⭐ CORRECCIÓN: Priorizar nombre de operadora desde datos normalizados
+      const operatorName = data.operatorName ||
+                          assignment?.operator || 
+                          assignment?.operatorName || 
+                          assignment?.name ||
+                          'No Asignado';
       
       const phone = assignment?.phone || 
                    assignment?.telefono || 
