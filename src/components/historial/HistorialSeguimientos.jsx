@@ -36,6 +36,7 @@ import { useAppStore } from '../../stores';
 import { useSeguimientosStore } from '../../stores/useSeguimientosStore';
 import { normalizeRecords, normalizeCallResult, normalizeBeneficiary } from '../../utils/dataNormalizer';
 import { computeGlobalMetrics } from '../../services/metricsEngine';
+import { getDisplayOperatorName } from '../../utils/operatorHelpers';
 import logger from '../../utils/logger';
 
 const HistorialSeguimientos = () => {
@@ -218,12 +219,13 @@ const HistorialSeguimientos = () => {
     const result = Array.from(beneficiaryMap.values()).map(data => {
       const assignment = assignmentMap.get(data.beneficiary.trim().toLowerCase());
       
-      // ⭐ CORRECCIÓN: Priorizar nombre de operadora desde datos normalizados
-      const operatorName = data.operatorName ||
-                          assignment?.operator || 
-                          assignment?.operatorName || 
-                          assignment?.name ||
-                          'No Asignado';
+      // ⚠️ BUGFIX CRÍTICO: Usar getDisplayOperatorName para obtener nombre correcto
+      // Esto evita que "Llamado exitoso" aparezca como nombre de teleoperadora
+      const operatorName = getDisplayOperatorName(
+        { assignedOperatorName: data.operatorName }, // beneficiary data
+        { operatorName: data.operatorName },         // record data
+        assignment                                    // assignment data
+      );
       
       const phone = assignment?.phone || 
                    assignment?.telefono || 

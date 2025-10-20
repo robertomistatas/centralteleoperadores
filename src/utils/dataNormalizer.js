@@ -223,16 +223,19 @@ export const normalizeDate = (date) => {
  * Normaliza un registro completo de seguimiento/llamada
  * Aplica todas las normalizaciones a un objeto completo
  * 
+ * BUGFIX: Usa normalizeOperatorFields de operatorHelpers para evitar
+ * confusión entre resultados de llamadas y nombres de operadoras
+ * 
  * @param {Object} record - Registro sin normalizar
  * @returns {Object} Registro completamente normalizado
  */
 export const normalizeRecord = (record = {}) => {
   if (!record || typeof record !== 'object') return null;
   
-  const operator = normalizeOperator({
-    operatorId: record.operatorId || record.operadorId || record.teleoperadoraId,
-    operatorName: record.operatorName || record.operador || record.teleoperadora
-  });
+  // ⚠️ BUGFIX CRÍTICO: Importar normalizeOperatorFields dinámicamente
+  // para evitar confusión entre resultado y operatorName
+  const { normalizeOperatorFields } = require('./operatorHelpers');
+  const operatorFields = normalizeOperatorFields(record);
   
   const beneficiary = normalizeBeneficiary({
     beneficiaryId: record.beneficiaryId || record.beneficiarioId || record.id,
@@ -244,9 +247,9 @@ export const normalizeRecord = (record = {}) => {
     // IDs
     id: record.id || record._id || '',
     
-    // Operadora normalizada
-    operatorId: operator.id,
-    operatorName: operator.name,
+    // Operadora normalizada (BUGFIX: validación robusta)
+    operatorId: operatorFields.operatorId,
+    operatorName: operatorFields.operatorName,
     
     // Beneficiario normalizado
     beneficiaryId: beneficiary.id,
