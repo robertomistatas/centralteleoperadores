@@ -232,10 +232,15 @@ const HistorialSeguimientos = () => {
       
       // ⚠️ BUGFIX CRÍTICO: Usar getDisplayOperatorName para obtener nombre correcto
       // Esto evita que "Llamado exitoso" aparezca como nombre de teleoperadora
+      // PRIORIDAD: assignment.operator > data.operatorName validado
       const operatorName = getDisplayOperatorName(
-        { assignedOperatorName: data.operatorName }, // beneficiary data
-        { operatorName: data.operatorName },         // record data
-        assignment                                    // assignment data
+        { 
+          assignedOperatorName: assignment?.operator || 
+                               assignment?.operatorName || 
+                               data.operatorName 
+        }, 
+        { operatorName: data.operatorName },
+        assignment
       );
       
       // 🔍 AUDITORÍA: Log cuando se corrija un caso problemático

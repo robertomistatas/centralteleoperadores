@@ -16,6 +16,7 @@
  */
 
 import logger from './logger.js';
+import { normalizeOperatorFields } from './operatorHelpers.js';
 
 /**
  * Limpia y normaliza números telefónicos
@@ -232,9 +233,8 @@ export const normalizeDate = (date) => {
 export const normalizeRecord = (record = {}) => {
   if (!record || typeof record !== 'object') return null;
   
-  // ⚠️ BUGFIX CRÍTICO: Importar normalizeOperatorFields dinámicamente
+  // ⚠️ BUGFIX CRÍTICO: Normalizar operatorFields correctamente
   // para evitar confusión entre resultado y operatorName
-  const { normalizeOperatorFields } = require('./operatorHelpers');
   const operatorFields = normalizeOperatorFields(record);
   
   const beneficiary = normalizeBeneficiary({
