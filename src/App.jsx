@@ -156,7 +156,7 @@ const TeleasistenciaApp = () => {
       // console.log('🔄 Sincronizando operators locales con Zustand:', operators.length);
       setZustandOperators(operators);
     }
-  }, [operators.length, zustandOperators.length, setZustandOperators]);
+  }, [operators.length]); // ✅ FIX: Solo operators.length
   
   useEffect(() => {
     const assignmentsCount = Object.keys(operatorAssignments).length;
@@ -165,12 +165,13 @@ const TeleasistenciaApp = () => {
       // console.log('🔄 Sincronizando operatorAssignments locales con Zustand:', assignmentsCount);
       setZustandOperatorAssignments(operatorAssignments);
     }
-  }, [Object.keys(operatorAssignments).length, Object.keys(zustandOperatorAssignments).length, setZustandOperatorAssignments]);
+  }, [Object.keys(operatorAssignments).length]); // ✅ FIX: Solo operatorAssignments
   
   // Estados para búsqueda de beneficiarios
   const [showBeneficiarySearch, setShowBeneficiarySearch] = useState(false);
   const [beneficiarySearchTerm, setBeneficiarySearchTerm] = useState('');
   const [beneficiarySearchResults, setBeneficiarySearchResults] = useState([]);
+  const searchInputRef = useRef(null); // ✅ Ref para mantener foco
 
   // Datos de ejemplo para las asignaciones
   const sampleAssignments = [
@@ -1215,7 +1216,7 @@ const TeleasistenciaApp = () => {
   };
 
   // Función para buscar beneficiarios en las asignaciones
-  const searchBeneficiaries = (searchTerm) => {
+  const searchBeneficiaries = useCallback((searchTerm) => {
     if (!searchTerm.trim()) {
       setBeneficiarySearchResults([]);
       return;
@@ -1321,7 +1322,7 @@ const TeleasistenciaApp = () => {
     
     console.log('🎯 Resultados filtrados:', filteredResults.length);
     setBeneficiarySearchResults(filteredResults);
-  };
+  }, [operatorAssignments, operators, getZustandAllAssignments]); // ✅ FIX: Agregar dependencias
 
   // Ref para el timeout del debouncing
   const searchTimeoutRef = useRef(null);
@@ -1336,9 +1337,14 @@ const TeleasistenciaApp = () => {
   }, []);
 
   // Manejar cambio en el término de búsqueda con debouncing
-  const handleBeneficiarySearch = (term) => {
+  const handleBeneficiarySearch = useCallback((term) => {
     // Actualizar inmediatamente el estado del input para que sea responsive
     setBeneficiarySearchTerm(term);
+    
+    // Mantener el foco en el input
+    if (searchInputRef.current && document.activeElement !== searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
     
     // Limpiar timeout anterior
     if (searchTimeoutRef.current) {
@@ -1355,7 +1361,7 @@ const TeleasistenciaApp = () => {
     searchTimeoutRef.current = setTimeout(() => {
       searchBeneficiaries(term);
     }, 300);
-  };
+  }, [searchBeneficiaries]);
 
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
@@ -2869,10 +2875,14 @@ const TeleasistenciaApp = () => {
             <div className="flex gap-4 items-center">
               <div className="flex-1">
                 <input
+                  ref={searchInputRef}
+                  key="beneficiary-search-input"
                   type="text"
                   placeholder="Buscar por nombre del beneficiario, teleoperadora, teléfono o comuna..."
                   value={beneficiarySearchTerm}
-                  onChange={(e) => handleBeneficiarySearch(e.target.value)}
+                  onInput={(e) => handleBeneficiarySearch(e.target.value)}
+                  autoComplete="off"
+                  autoFocus
                   className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>

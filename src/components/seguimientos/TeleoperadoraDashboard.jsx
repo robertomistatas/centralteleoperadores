@@ -93,7 +93,7 @@ const TeleoperadoraDashboard = () => {
     });
 
     return unsubscribe;
-  }, [invalidateCache]);
+  }, []); // ✅ FIX: Array vacío para evitar rerenders infinitos
 
   // Cargar datos iniciales - CON PERSISTENCIA INTELIGENTE
   useEffect(() => {
@@ -134,7 +134,7 @@ const TeleoperadoraDashboard = () => {
       console.log('📊 [DASHBOARD] Componente desmontado - datos PERSISTEN en store');
       // clearDashboard(); // NO LIMPIAR - mantener datos entre navegaciones
     };
-  }, [user?.uid, authUser?.uid, initializeSubscription, isAdmin, dataLoaded, lastLoadedEmail]);
+  }, [user?.uid, authUser?.uid]); // ✅ FIX: Remover dataLoaded y lastLoadedEmail para evitar loop infinito
 
   /**
    * Carga todos los datos necesarios para el dashboard - CONEXIÓN DIRECTA A FIREBASE + EXCEL
