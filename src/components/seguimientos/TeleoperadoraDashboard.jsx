@@ -48,11 +48,13 @@ const TeleoperadoraDashboard = () => {
     seguimientos,
     isLoading,
     dataLoaded,
+    lastLoadedEmail,
     setBeneficiarios,
     setSeguimientos,
     setIsLoading,
     setDataLoaded,
     needsReload,
+    invalidateCache,
     clearDashboard
   } = useDashboardStore();
 
@@ -78,6 +80,21 @@ const TeleoperadoraDashboard = () => {
     isAdmin
   });
 
+  // ✅ CORRECCIÓN CRÍTICA: Escuchar cambios en CallStore para invalidar caché
+  useEffect(() => {
+    // Suscribirse a cambios en el CallStore
+    const unsubscribe = useCallStore.subscribe((state) => {
+      // Si cambia lastUpdated, significa que se cargaron nuevos datos del Excel
+      if (state.lastUpdated) {
+        console.log('🔄 [DASHBOARD] Detectado cambio en CallStore, invalidando caché...');
+        // Invalidar caché para forzar recarga
+        invalidateCache();
+      }
+    });
+
+    return unsubscribe;
+  }, [invalidateCache]);
+
   // Cargar datos iniciales - CON PERSISTENCIA INTELIGENTE
   useEffect(() => {
     if (!user) return;
@@ -90,19 +107,25 @@ const TeleoperadoraDashboard = () => {
     // Inicializar el store de seguimientos para sincronización en tiempo real
     initializeSubscription(user.uid || authUser.uid);
     
+    // ✅ CORRECCIÓN: Verificar también la timestamp del CallStore
+    const { lastUpdated: callStoreLastUpdated } = useCallStore.getState();
+    const needsReloadDueToNewData = callStoreLastUpdated && (!dataLoaded || !lastLoadedEmail);
+    
     // ✅ VERIFICAR SI NECESITAMOS RECARGAR usando el store persistente
-    if (!needsReload(currentEmail)) {
+    if (!needsReload(currentEmail) && !needsReloadDueToNewData) {
       console.log('✅ [DASHBOARD] Datos válidos en caché:', {
         beneficiarios: beneficiarios.length,
         seguimientos: seguimientos.length,
-        email: currentEmail
+        email: currentEmail,
+        callStoreUpdated: callStoreLastUpdated
       });
       setIsLoading(false);
       return; // Ya tenemos datos válidos para este usuario
     }
     
     // Si llegamos aquí, necesitamos cargar datos
-    console.log('📥 [DASHBOARD] Cargando datos frescos para:', currentEmail);
+    console.log('📥 [DASHBOARD] Cargando datos frescos para:', currentEmail, 
+                needsReloadDueToNewData ? '(nuevos datos en CallStore)' : '');
     loadDashboardData();
 
     // ✅ NO limpiar el store al desmontar - mantener datos en caché
@@ -111,7 +134,7 @@ const TeleoperadoraDashboard = () => {
       console.log('📊 [DASHBOARD] Componente desmontado - datos PERSISTEN en store');
       // clearDashboard(); // NO LIMPIAR - mantener datos entre navegaciones
     };
-  }, [user?.uid, authUser?.uid, initializeSubscription, isAdmin]);
+  }, [user?.uid, authUser?.uid, initializeSubscription, isAdmin, dataLoaded, lastLoadedEmail]);
 
   /**
    * Carga todos los datos necesarios para el dashboard - CONEXIÓN DIRECTA A FIREBASE + EXCEL
@@ -525,50 +548,160 @@ const TeleoperadoraDashboard = () => {
 
   /**
    * Calcula el estado de cada beneficiario según las reglas de 15/30 días
+   * ✅ CORRECCIÓN CRÍTICA: Consulta AMBAS fuentes de datos:
+   *    1. Seguimientos manuales de Firebase (nuevos registros)
+   *    2. Historial del Excel (datos históricos en callData)
    */
+  // Función auxiliar para parsear fechas en formato chileno DD-MM-YYYY
+  const parsearFechaChilena = (fechaStr) => {
+    if (!fechaStr) return null;
+    
+    // Si ya es un objeto Date o timestamp ISO, retornarlo
+    if (fechaStr instanceof Date) return fechaStr;
+    if (typeof fechaStr === 'string' && fechaStr.includes('T')) {
+      return new Date(fechaStr);
+    }
+    
+    // Parsear formato DD-MM-YYYY (formato chileno del Excel)
+    const partes = fechaStr.toString().split('-');
+    if (partes.length === 3) {
+      const dia = parseInt(partes[0], 10);
+      const mes = parseInt(partes[1], 10) - 1; // Meses en JS van de 0-11
+      const anio = parseInt(partes[2], 10);
+      return new Date(anio, mes, dia);
+    }
+    
+    // Fallback: intentar parseo directo
+    return new Date(fechaStr);
+  };
+
   const calcularEstadoBeneficiario = (beneficiario) => {
+    // 1. Obtener seguimientos manuales de Firebase
     const seguimientosBenef = seguimientos.filter(s => 
       s.beneficiarioId === beneficiario.id || 
       s.beneficiario === beneficiario.beneficiary
     );
 
-    // Debug específico para Sergio Román Rojas
-    const esSergio = beneficiario.beneficiary?.toLowerCase().includes('sergio') && 
-                    beneficiario.beneficiary?.toLowerCase().includes('román');
+    // 2. ✅ NUEVO: Obtener datos históricos del Excel (callData)
+    // Buscar por nombre de beneficiario y/o teléfono
+    const nombreBenef = (beneficiario.beneficiary || beneficiario.nombre || '').toLowerCase().trim();
+    const telefonoBenef = (beneficiario.phone || beneficiario.telefono || '').replace(/\D/g, '');
     
-    if (esSergio) {
-      console.log('🎯 DEBUG SERGIO ROMÁN ROJAS:');
+    // ⚠️ DEBUG CRÍTICO: Verificar que callData tenga datos
+    const esRosa = nombreBenef.includes('rosa') && nombreBenef.includes('aguilera');
+    if (esRosa) {
+      console.log('🚨 DEBUG INICIAL ROSA AGUILERA:');
+      console.log('   callData existe?', !!callData);
+      console.log('   callData.length:', callData?.length || 0);
+      console.log('   Primeros 3 registros de callData:', callData?.slice(0, 3).map(c => ({
+        beneficiario: c.beneficiario,
+        telefono: c.telefono,
+        resultado: c.resultado
+      })));
+    }
+    
+    const llamadasExcel = callData?.filter(call => {
+      // Coincidencia por nombre
+      const nombreCall = (call.beneficiario || call.beneficiary || call.nombre || '').toLowerCase().trim();
+      const nombreMatch = nombreCall === nombreBenef;
+      
+      // Coincidencia por teléfono (últimos 8 dígitos)
+      let telefonoMatch = false;
+      if (telefonoBenef && telefonoBenef.length >= 8) {
+        const telefonoCall = (call.telefono || call.phone || call.numero || '').toString().replace(/\D/g, '');
+        if (telefonoCall.length >= 8) {
+          const keyBenef = telefonoBenef.slice(-8);
+          const keyCall = telefonoCall.slice(-8);
+          telefonoMatch = keyBenef === keyCall;
+        }
+      }
+      
+      return nombreMatch || telefonoMatch;
+    }) || [];
+
+    
+    if (esRosa) {
+      console.log('🔍 DEBUG ROSA AGUILERA MESA:');
       console.log('   Beneficiario:', beneficiario.beneficiary);
-      console.log('   ID:', beneficiario.id);
-      console.log('   Seguimientos encontrados:', seguimientosBenef.length);
-      console.log('   Seguimientos:', seguimientosBenef);
-      console.log('   Total seguimientos disponibles:', seguimientos.length);
+      console.log('   Teléfono:', telefonoBenef);
+      console.log('   Seguimientos Firebase:', seguimientosBenef.length);
+      console.log('   Llamadas Excel encontradas:', llamadasExcel.length);
+      if (llamadasExcel.length > 0) {
+        console.log('   Primeras 3 llamadas del Excel:');
+        llamadasExcel.slice(0, 3).forEach((call, i) => {
+          console.log(`     ${i+1}. Fecha: ${call.fecha || call.date}, Resultado: ${call.resultado || call.result}`);
+        });
+      }
     }
 
-    if (seguimientosBenef.length === 0) {
-      if (esSergio) console.log('   ❌ Sin seguimientos - estado URGENTE');
+    // 3. ✅ COMBINAR ambas fuentes de datos en un formato común
+    const todosLosContactos = [];
+    
+    // Agregar seguimientos manuales de Firebase
+    seguimientosBenef.forEach(seg => {
+      todosLosContactos.push({
+        fecha: seg.fechaContacto,
+        resultado: seg.tipoResultado,
+        esExitoso: seg.tipoResultado === 'exitoso',
+        fuente: 'firebase'
+      });
+    });
+    
+    // Agregar llamadas del Excel
+    llamadasExcel.forEach(call => {
+      const resultado = call.resultado || call.result || call.estado || '';
+      const duracion = parseInt(call.duracion || call.duration || 0);
+      // Una llamada es exitosa si resultado es "Llamado exitoso" Y tiene duración > 0
+      const esExitoso = (resultado === 'Llamado exitoso' || resultado === 'exitoso' || resultado === 'Exitoso') && duracion > 0;
+      
+      todosLosContactos.push({
+        fecha: call.fecha || call.date,
+        resultado: resultado,
+        esExitoso: esExitoso,
+        fuente: 'excel'
+      });
+    });
+
+    if (esRosa) {
+      console.log('   Total contactos combinados:', todosLosContactos.length);
+      console.log('   Contactos exitosos:', todosLosContactos.filter(c => c.esExitoso).length);
+    }
+
+    // 4. Verificar si hay contactos
+    if (todosLosContactos.length === 0) {
+      if (esRosa) console.log('   ❌ Sin contactos en ninguna fuente - estado URGENTE');
       return { estado: 'urgente', ultimoContacto: null, diasSinContacto: null };
     }
 
-    // Encontrar el último contacto exitoso
-    const contactosExitosos = seguimientosBenef.filter(s => s.tipoResultado === 'exitoso');
+    // 5. Encontrar el último contacto exitoso
+    const contactosExitosos = todosLosContactos.filter(c => c.esExitoso);
     
-    if (esSergio) {
-      console.log('   Contactos exitosos:', contactosExitosos.length);
-      contactosExitosos.forEach(c => console.log('     -', c.fechaContacto, c.tipoResultado));
+    if (esRosa) {
+      console.log('   Contactos exitosos encontrados:', contactosExitosos.length);
+      contactosExitosos.slice(0, 3).forEach((c, i) => {
+        console.log(`     ${i+1}. Fecha: ${c.fecha}, Fuente: ${c.fuente}`);
+      });
     }
     
     if (contactosExitosos.length === 0) {
-      if (esSergio) console.log('   ❌ Sin contactos exitosos - estado URGENTE');
+      if (esRosa) console.log('   ❌ Sin contactos exitosos - estado URGENTE');
       return { estado: 'urgente', ultimoContacto: null, diasSinContacto: null };
     }
 
-    const ultimoContacto = contactosExitosos.sort((a, b) => 
-      new Date(b.fechaContacto) - new Date(a.fechaContacto)
-    )[0];
+    // 6. Ordenar por fecha y tomar el más reciente
+    const ultimoContacto = contactosExitosos.sort((a, b) => {
+      try {
+        const fechaA = parsearFechaChilena(a.fecha);
+        const fechaB = parsearFechaChilena(b.fecha);
+        return fechaB - fechaA;
+      } catch {
+        return 0;
+      }
+    })[0];
 
+    const fechaUltimoContacto = parsearFechaChilena(ultimoContacto.fecha);
     const diasSinContacto = Math.floor(
-      (new Date() - new Date(ultimoContacto.fechaContacto)) / (1000 * 60 * 60 * 24)
+      (new Date() - fechaUltimoContacto) / (1000 * 60 * 60 * 24)
     );
 
     let estado;
@@ -580,17 +713,19 @@ const TeleoperadoraDashboard = () => {
       estado = 'urgente';
     }
     
-    if (esSergio) {
-      console.log('   ✅ Último contacto:', ultimoContacto.fechaContacto);
+    if (esRosa) {
+      console.log('   ✅ Último contacto exitoso:', ultimoContacto.fecha, `(fuente: ${ultimoContacto.fuente})`);
+      console.log('   📅 Fecha parseada:', fechaUltimoContacto);
       console.log('   📅 Días sin contacto:', diasSinContacto);
       console.log('   🏷️ Estado final:', estado);
     }
 
     return {
       estado,
-      ultimoContacto: ultimoContacto.fechaContacto,
+      ultimoContacto: ultimoContacto.fecha,
       diasSinContacto,
-      totalSeguimientos: seguimientosBenef.length
+      totalSeguimientos: todosLosContactos.length,
+      fuenteUltimoContacto: ultimoContacto.fuente // Para debugging
     };
   };
 

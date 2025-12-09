@@ -152,6 +152,93 @@ export const normalizeCallResult = (result = '') => {
 };
 
 /**
+ * Normaliza el tipo/dirección de llamada
+ * Convierte variaciones a dos categorías estándar:
+ * - 'entrante': Llamada del beneficiario a la central
+ * - 'saliente': Llamada de la teleoperadora al beneficiario
+ * 
+ * ⭐ FASE 6.1: Nueva función para política de seguimientos
+ * 
+ * @param {string} direction - Tipo/dirección sin normalizar
+ * @returns {string} Tipo normalizado ('entrante' | 'saliente')
+ */
+export const normalizeCallDirection = (direction = '') => {
+  if (!direction || typeof direction !== 'string') return 'saliente'; // default
+  
+  const normalized = direction.toLowerCase().trim();
+  
+  // Patrones de llamada entrante
+  const inboundPatterns = [
+    /^entrant/i,
+    /^inbound/i,
+    /^entrada/i,
+    /^recibid[oa]/i,
+    /^incoming/i
+  ];
+  
+  // Verificar si es entrante
+  if (inboundPatterns.some(pattern => pattern.test(normalized))) {
+    return 'entrante';
+  }
+  
+  // Por defecto es saliente
+  return 'saliente';
+};
+
+/**
+ * Determina si un registro es un seguimiento válido según política empresarial
+ * 
+ * ⭐ FASE 6.1 - NUEVA LÓGICA EMPRESARIAL:
+ * Un seguimiento es válido cuando:
+ * 1. Es llamada SALIENTE con resultado EXITOSA (lógica actual)
+ * 2. Es llamada ENTRANTE (independiente del resultado) (nueva política)
+ * 
+ * Casos de uso:
+ * - Beneficiario llama a la central → VÁLIDO (aunque no se contacte)
+ * - Teleoperadora llama con éxito → VÁLIDO
+ * - Teleoperadora llama sin éxito → NO VÁLIDO
+ * 
+ * @param {Object} record - Registro normalizado
+ * @returns {boolean} true si es seguimiento válido
+ * 
+ * @example
+ * // Llamada saliente exitosa
+ * isValidCall({ resultado: 'exitosa', callDirection: 'saliente' }) // → true
+ * 
+ * // Llamada saliente fallida
+ * isValidCall({ resultado: 'fallida', callDirection: 'saliente' }) // → false
+ * 
+ * // Llamada entrante (siempre válida)
+ * isValidCall({ resultado: 'fallida', callDirection: 'entrante' }) // → true
+ */
+export const isValidCall = (record = {}) => {
+  if (!record || typeof record !== 'object') return false;
+  
+  const resultado = record.resultado || '';
+  const direction = record.callDirection || record.tipo_llamada || record.tipoLlamada || '';
+  
+  // Normalizar dirección
+  const normalizedDirection = normalizeCallDirection(direction);
+  
+  // ⭐ POLÍTICA 1: Llamada entrante siempre es válida
+  if (normalizedDirection === 'entrante') {
+    logger.info('[DataNormalizer] Seguimiento válido por llamada ENTRANTE', {
+      beneficiary: record.beneficiaryName,
+      direction: normalizedDirection,
+      resultado
+    });
+    return true;
+  }
+  
+  // ⭐ POLÍTICA 2: Llamada saliente solo válida si es exitosa
+  if (normalizedDirection === 'saliente' && resultado === 'exitosa') {
+    return true;
+  }
+  
+  return false;
+};
+
+/**
  * Normaliza fecha a formato ISO string
  * Acepta: Date object, timestamp, string ISO, DD/MM/YYYY, etc.
  * 
@@ -243,7 +330,15 @@ export const normalizeRecord = (record = {}) => {
     telefono: record.telefono || record.fono || record.phone
   });
   
-  return {
+  // ⭐ FASE 6.1: Normalizar tipo/dirección de llamada
+  const rawDirection = record.callDirection || 
+                      record.tipo_llamada || 
+                      record.tipoLlamada || 
+                      record.direction || 
+                      record.tipo || 
+                      '';
+  
+  const normalized = {
     // IDs
     id: record.id || record._id || '',
     
@@ -259,6 +354,9 @@ export const normalizeRecord = (record = {}) => {
     // Resultado normalizado
     resultado: normalizeCallResult(record.resultado || record.status || record.estadoLlamada),
     
+    // ⭐ FASE 6.1: Dirección de llamada normalizada
+    callDirection: normalizeCallDirection(rawDirection),
+    
     // Fechas normalizadas
     fecha: normalizeDate(record.fecha || record.date || record.fechaLlamada),
     createdAt: normalizeDate(record.createdAt || record.fecha_creacion),
@@ -272,6 +370,11 @@ export const normalizeRecord = (record = {}) => {
     // Metadata original (por si necesitamos referencia)
     _original: record
   };
+  
+  // ⭐ FASE 6.1: Añadir flag de seguimiento válido
+  normalized.isValidFollowup = isValidCall(normalized);
+  
+  return normalized;
 };
 
 /**
@@ -394,17 +497,31 @@ export const groupByDate = (records = []) => {
   return grouped;
 };
 
+/**
+ * ⭐ FASE 6.1: Filtra registros para obtener solo seguimientos válidos
+ * Aplica la nueva política empresarial
+ * 
+ * @param {Array} records - Array de registros normalizados
+ * @returns {Array} Solo registros que son seguimientos válidos
+ */
+export const getValidFollowups = (records = []) => {
+  return records.filter(r => isValidCall(r));
+};
+
 // Exportación por defecto
 export default {
   cleanPhone,
   normalizeOperator,
   normalizeBeneficiary,
   normalizeCallResult,
+  normalizeCallDirection,  // ⭐ FASE 6.1: Nueva exportación
   normalizeDate,
   normalizeRecord,
   normalizeRecords,
   validateNormalizedRecord,
   groupByOperator,
   groupByResult,
-  groupByDate
+  groupByDate,
+  isValidCall,             // ⭐ FASE 6.1: Nueva exportación
+  getValidFollowups        // ⭐ FASE 6.1: Nueva exportación
 };

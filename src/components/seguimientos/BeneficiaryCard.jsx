@@ -30,6 +30,30 @@ const BeneficiaryCard = ({
 
   // Calcular estado y días sin contacto
   const calcularEstado = () => {
+    // ✅ PRIORIDAD: Si el beneficiario ya tiene estado calculado (desde Dashboard con Excel + Firebase), usarlo
+    if (beneficiario.estado && beneficiario.diasSinContacto !== undefined) {
+      let mensaje;
+      const dias = beneficiario.diasSinContacto;
+      
+      if (dias === null) {
+        mensaje = 'Sin contactos exitosos';
+      } else if (dias <= 15) {
+        mensaje = `Último contacto hace ${dias} día${dias !== 1 ? 's' : ''}`;
+      } else if (dias <= 30) {
+        mensaje = `${dias} días sin contacto`;
+      } else {
+        mensaje = `¡${dias} días sin contacto!`;
+      }
+      
+      return {
+        estado: beneficiario.estado,
+        ultimoContacto: beneficiario.ultimoContacto,
+        diasSinContacto: beneficiario.diasSinContacto,
+        mensaje
+      };
+    }
+    
+    // ⚠️ FALLBACK: Calcular solo con seguimientos de Firebase (legacy)
     const contactosExitosos = seguimientos.filter(s => s.tipoResultado === 'exitoso');
     
     if (contactosExitosos.length === 0) {

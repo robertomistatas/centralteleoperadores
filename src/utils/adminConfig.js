@@ -6,6 +6,7 @@
 // Lista de emails con permisos de administrador
 export const ADMIN_EMAILS = [
   'roberto@mistatas.com',
+  'carolina@mistatas.com',
   // Agregar más emails de administradores aquí
 ];
 

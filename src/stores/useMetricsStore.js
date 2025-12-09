@@ -57,17 +57,15 @@ const useMetricsStore = create(
     unsubscribers: [],
     
     /**
-     * Inicializar listeners de Firestore (temporalmente deshabilitado)
+     * Inicializar listeners de Firestore
+     * ✓ RC2: Listeners habilitados para métricas en tiempo real
      */
     initializeListeners: () => {
-      console.log('⚠️ Listeners de métricas deshabilitados hasta que la BD esté inicializada');
-      return; // Salir temprano para evitar errores
+      logger.info('[useMetricsStore] 🚀 Iniciando listeners de métricas...');
       
-      // NOTA: El código siguiente está comentado intencionalmente hasta que Firebase esté configurado
-      /* 
       const state = get();
       
-      // Limpiar listeners existentes
+      // Limpiar listeners existentes para evitar duplicaciones
       state.cleanup();
       
       const unsubscribers = [];
@@ -85,6 +83,8 @@ const useMetricsStore = create(
                 data.lastUpdated = data.lastUpdated.toDate();
               }
               
+              logger.info('[useMetricsStore] ✅ Métricas globales actualizadas');
+              
               set((state) => ({
                 globalMetrics: data,
                 loading: { ...state.loading, global: false },
@@ -99,7 +99,7 @@ const useMetricsStore = create(
             }
           },
           (error) => {
-            console.error('Error en listener de métricas globales:', error);
+            logger.error('[useMetricsStore] ❌ Error en listener de métricas globales:', error);
             set((state) => ({
               loading: { ...state.loading, global: false },
               errors: { ...state.errors, global: error.message }
@@ -108,7 +108,7 @@ const useMetricsStore = create(
         );
         unsubscribers.push(unsubGlobal);
       } catch (error) {
-        console.error('Error configurando listener global:', error);
+        logger.error('[useMetricsStore] ❌ Error configurando listener global:', error);
         set((state) => ({
           loading: { ...state.loading, global: false },
           errors: { ...state.errors, global: error.message }
@@ -142,6 +142,10 @@ const useMetricsStore = create(
               operatorsData[doc.id] = data;
             });
             
+            logger.info('[useMetricsStore] ✅ Métricas de teleoperadoras actualizadas', {
+              count: Object.keys(operatorsData).length
+            });
+            
             set((state) => ({
               teleoperadorasMetrics: operatorsData,
               loading: { ...state.loading, teleoperadoras: false },
@@ -149,7 +153,7 @@ const useMetricsStore = create(
             }));
           },
           (error) => {
-            console.error('Error en listener de teleoperadoras:', error);
+            logger.error('[useMetricsStore] ❌ Error en listener de teleoperadoras:', error);
             set((state) => ({
               loading: { ...state.loading, teleoperadoras: false },
               errors: { ...state.errors, teleoperadoras: error.message }
@@ -158,7 +162,7 @@ const useMetricsStore = create(
         );
         unsubscribers.push(unsubOperators);
       } catch (error) {
-        console.error('Error configurando listener teleoperadoras:', error);
+        logger.error('[useMetricsStore] ❌ Error configurando listener teleoperadoras:', error);
         set((state) => ({
           loading: { ...state.loading, teleoperadoras: false },
           errors: { ...state.errors, teleoperadoras: error.message }
@@ -203,6 +207,10 @@ const useMetricsStore = create(
               beneficiariesData[doc.id] = data;
             });
             
+            logger.info('[useMetricsStore] ✅ Métricas de beneficiarios actualizadas', {
+              count: Object.keys(beneficiariesData).length
+            });
+            
             set((state) => ({
               beneficiariosMetrics: beneficiariesData,
               loading: { ...state.loading, beneficiarios: false },
@@ -210,7 +218,7 @@ const useMetricsStore = create(
             }));
           },
           (error) => {
-            console.error('Error en listener de beneficiarios:', error);
+            logger.error('[useMetricsStore] ❌ Error en listener de beneficiarios:', error);
             set((state) => ({
               loading: { ...state.loading, beneficiarios: false },
               errors: { ...state.errors, beneficiarios: error.message }
@@ -219,7 +227,7 @@ const useMetricsStore = create(
         );
         unsubscribers.push(unsubBeneficiaries);
       } catch (error) {
-        console.error('Error configurando listener beneficiarios:', error);
+        logger.error('[useMetricsStore] ❌ Error configurando listener beneficiarios:', error);
         set((state) => ({
           loading: { ...state.loading, beneficiarios: false },
           errors: { ...state.errors, beneficiarios: error.message }
@@ -248,6 +256,8 @@ const useMetricsStore = create(
                 }));
               }
               
+              logger.info('[useMetricsStore] ✅ Métricas de no asignados actualizadas');
+              
               set((state) => ({
                 noAsignadosMetrics: data,
                 loading: { ...state.loading, noAsignados: false },
@@ -262,7 +272,7 @@ const useMetricsStore = create(
             }
           },
           (error) => {
-            console.error('Error en listener de no asignados:', error);
+            logger.error('[useMetricsStore] ❌ Error en listener de no asignados:', error);
             set((state) => ({
               loading: { ...state.loading, noAsignados: false },
               errors: { ...state.errors, noAsignados: error.message }
@@ -271,7 +281,7 @@ const useMetricsStore = create(
         );
         unsubscribers.push(unsubNoAsignados);
       } catch (error) {
-        console.error('Error configurando listener no asignados:', error);
+        logger.error('[useMetricsStore] ❌ Error configurando listener no asignados:', error);
         set((state) => ({
           loading: { ...state.loading, noAsignados: false },
           errors: { ...state.errors, noAsignados: error.message }
@@ -280,7 +290,10 @@ const useMetricsStore = create(
       
       // Guardar unsubscribers
       set({ unsubscribers });
-      */
+      
+      logger.info('[useMetricsStore] ✅ Todos los listeners iniciados exitosamente', {
+        count: unsubscribers.length
+      });
     },
     
     /**

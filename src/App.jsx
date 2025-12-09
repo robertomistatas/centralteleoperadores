@@ -1065,20 +1065,49 @@ const TeleasistenciaApp = () => {
     if (!operator) return;
 
     const processedData = data.slice(1).map((row, index) => {
-      // Procesar teléfonos (separados por |, - o espacios)
-      const phones = row[1] ? String(row[1]).split(/[\|\-\s]+/).filter(phone => phone.trim().length === 9) : [];
+      // ⭐ BUGFIX: Procesar teléfonos separados por |, -, espacios, comas o punto y coma
+      const rawPhones = row[1] ? String(row[1]).split(/[\|\-\s,;]+/) : [];
+      
+      // ⭐ BUGFIX: Limpiar y validar teléfonos (8-10 dígitos, no exactamente 9)
+      const phones = rawPhones
+        .map(phone => phone.trim().replace(/\D/g, '')) // Eliminar no-dígitos
+        .filter(phone => phone.length >= 8 && phone.length <= 10); // Aceptar 8-10 dígitos
+      
+      const beneficiaryName = row[0] ? String(row[0]).trim() : '';
       
       return {
         id: `${operatorId}-${index}`,
         operatorId: operatorId,
         operatorName: operator.name,
         operatorEmail: operator.email || '', // ✅ Agregar email del operador
-        beneficiary: row[0] || '',
+        beneficiary: beneficiaryName,
         phones: phones,
         primaryPhone: phones[0] || '',
         commune: row[2] || ''
       };
-    }).filter(item => item.beneficiary && item.primaryPhone);
+    }).filter(item => item.beneficiary); // ⭐ BUGFIX: Solo requerir beneficiary, no primaryPhone
+
+    // ⭐ LOGGING DETALLADO: Información de procesamiento
+    const totalRowsInExcel = data.length - 1; // -1 por header
+    const sinNombre = totalRowsInExcel - processedData.length;
+    const sinTelefono = processedData.filter(item => !item.primaryPhone).length;
+    
+    logger.info('📊 [UPLOAD] Resumen de carga de beneficiarios', {
+      operador: operator.name,
+      totalFilasExcel: totalRowsInExcel,
+      beneficiariosValidos: processedData.length,
+      sinNombre: sinNombre,
+      sinTelefono: sinTelefono,
+      conTelefono: processedData.length - sinTelefono
+    });
+    
+    console.log('📊 RESUMEN DE CARGA:');
+    console.log(`   Operadora: ${operator.name}`);
+    console.log(`   Total filas en Excel: ${totalRowsInExcel}`);
+    console.log(`   ✅ Beneficiarios procesados: ${processedData.length}`);
+    console.log(`   ❌ Sin nombre (descartados): ${sinNombre}`);
+    console.log(`   ⚠️ Sin teléfono válido: ${sinTelefono}`);
+    console.log(`   ✓ Con teléfono válido: ${processedData.length - sinTelefono}`);
 
     try {
       // Guardar en Firestore
@@ -1107,7 +1136,7 @@ const TeleasistenciaApp = () => {
       });
 
       setUploadingFor(null);
-      showSuccess('Asignaciones guardadas correctamente');
+      showSuccess(`Asignaciones guardadas: ${processedData.length} beneficiarios`);
     } catch (error) {
       logger.error('Error saving assignments:', error);
       showError('Error al guardar las asignaciones. Por favor, inténtelo nuevamente.');
@@ -2843,10 +2872,7 @@ const TeleasistenciaApp = () => {
                   type="text"
                   placeholder="Buscar por nombre del beneficiario, teleoperadora, teléfono o comuna..."
                   value={beneficiarySearchTerm}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    handleBeneficiarySearch(value);
-                  }}
+                  onChange={(e) => handleBeneficiarySearch(e.target.value)}
                   className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -2950,7 +2976,7 @@ const TeleasistenciaApp = () => {
                 <input
                   type="text"
                   value={operatorForm.name}
-                  onChange={(e) => setOperatorForm({...operatorForm, name: e.target.value})}
+                  onChange={(e) => setOperatorForm(prev => ({...prev, name: e.target.value}))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="Ej: María González"
                 />
@@ -2963,7 +2989,7 @@ const TeleasistenciaApp = () => {
                 <input
                   type="email"
                   value={operatorForm.email}
-                  onChange={(e) => setOperatorForm({...operatorForm, email: e.target.value})}
+                  onChange={(e) => setOperatorForm(prev => ({...prev, email: e.target.value}))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="maria.gonzalez@central.cl"
                 />
@@ -2976,7 +3002,7 @@ const TeleasistenciaApp = () => {
                 <input
                   type="tel"
                   value={operatorForm.phone}
-                  onChange={(e) => setOperatorForm({...operatorForm, phone: e.target.value})}
+                  onChange={(e) => setOperatorForm(prev => ({...prev, phone: e.target.value}))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="987654321"
                 />

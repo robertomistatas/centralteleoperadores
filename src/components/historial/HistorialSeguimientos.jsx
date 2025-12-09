@@ -34,7 +34,12 @@ import {
 import useCallStore from '../../stores/useCallStore';
 import { useAppStore } from '../../stores';
 import { useSeguimientosStore } from '../../stores/useSeguimientosStore';
-import { normalizeRecords, normalizeCallResult, normalizeBeneficiary } from '../../utils/dataNormalizer';
+import { 
+  normalizeRecords, 
+  normalizeCallResult, 
+  normalizeBeneficiary, 
+  isValidCall  // ⭐ FASE 6.1: Nueva importación
+} from '../../utils/dataNormalizer';
 import { computeGlobalMetrics } from '../../services/metricsEngine';
 import { getDisplayOperatorName, isCallResult } from '../../utils/operatorHelpers';
 import logger from '../../utils/logger';
@@ -189,8 +194,9 @@ const HistorialSeguimientos = () => {
       // ⭐ RC1 CRÍTICO: Usar parser UTC para evitar problemas de zona horaria
       const callDate = record.fecha ? parseDateUTC(record.fecha) : null;
 
-      // ⭐ CORRECCIÓN: Verificar si es exitosa usando resultado normalizado
-      const isSuccessful = record.resultado === 'exitosa';
+      // ⭐ FASE 6.1: Verificar si es seguimiento válido usando nueva lógica
+      // (salientes exitosas O entrantes)
+      const isSuccessful = isValidCall(record);
 
       if (isSuccessful && callDate && !isNaN(callDate.getTime())) {
         beneficiaryData.successfulCalls.push({ date: callDate, call: record });

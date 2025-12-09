@@ -15,6 +15,7 @@ import logger from '../utils/logger';
 
 /**
  * Mapeo de nombres de columnas comunes a nombres normalizados
+ * ⭐ FASE 6.1: Añadido mapeo para tipo_llamada/callDirection
  */
 const COLUMN_MAPPINGS = {
   beneficiario: ['beneficiario', 'nombre', 'paciente', 'usuario', 'cliente', 'persona'],
@@ -24,7 +25,10 @@ const COLUMN_MAPPINGS = {
   duracion: ['duracion', 'duración', 'tiempo', 'duration', 'segundos', 'minutos'],
   operadora: ['operadora', 'operador', 'teleoperadora', 'agente', 'agent', 'usuario'],
   observaciones: ['observaciones', 'notas', 'comentarios', 'obs', 'notes', 'comments'],
-  comuna: ['comuna', 'city', 'ciudad', 'localidad', 'municipio']
+  comuna: ['comuna', 'city', 'ciudad', 'localidad', 'municipio'],
+  tipoLlamada: ['tipo', 'tipo llamada', 'tipo_llamada', 'tipo de llamada', 'tipollam', 
+                'dirección', 'direccion', 'direction', 'call direction', 'call_direction',
+                'entrante', 'saliente', 'inbound', 'outbound'] // ⭐ FASE 6.1: Nueva columna
 };
 
 /**
@@ -316,9 +320,29 @@ export async function parseAndNormalizeExcel(file) {
           case 'duracion':
             normalized[normalizedCol] = value ? parseInt(value) || 0 : 0;
             break;
+          case 'tipoLlamada':
+            // ⭐ FASE 6.1: Normalizar tipo de llamada
+            const tipo = value ? String(value).toLowerCase().trim() : '';
+            if (tipo.includes('entrant') || tipo === 'entrante' || tipo === 'inbound') {
+              normalized[normalizedCol] = 'entrante';
+            } else if (tipo.includes('salient') || tipo === 'saliente' || tipo === 'outbound') {
+              normalized[normalizedCol] = 'saliente';
+            } else if (tipo) {
+              // Si tiene valor pero no coincide, inferir por contexto
+              normalized[normalizedCol] = tipo;
+            } else {
+              // Default: saliente (retrocompatibilidad)
+              normalized[normalizedCol] = 'saliente';
+            }
+            break;
           default:
             normalized[normalizedCol] = value ? String(value).trim() : '';
         }
+      }
+      
+      // ⭐ FASE 6.1: Si no se detectó tipoLlamada, establecer default
+      if (!normalized.tipoLlamada) {
+        normalized.tipoLlamada = 'saliente'; // Retrocompatibilidad
       }
       
       // Clasificar resultado si existe
