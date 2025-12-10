@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, BarChart3, PieChart, Calendar, AlertCircle, Plus, Edit, Trash2, UserPlus, FileSpreadsheet, Save, X, LogOut, User, Zap, Database, Activity, Settings, GitCompare } from 'lucide-react';
+import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, BarChart3, PieChart, Calendar, AlertCircle, Plus, Edit, Trash2, UserPlus, FileSpreadsheet, Save, X, LogOut, User, Zap, Database, Activity, Settings, GitCompare, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useAuth } from './AuthContext';
 import { operatorService, assignmentService, callDataService, resetErrorState } from './firestoreService';
@@ -149,6 +149,7 @@ const TeleasistenciaApp = () => {
   const [operatorForm, setOperatorForm] = useState({ name: '', email: '', phone: '' });
   const [operatorAssignments, setOperatorAssignments] = useState({});
   const [uploadingFor, setUploadingFor] = useState(null);
+  const [syncingProfiles, setSyncingProfiles] = useState(false); // ⭐ Estado para sincronización de perfiles
   
   // 🔥 SINCRONIZACIÓN AUTOMÁTICA: Sincronizar estado local con Zustand cada vez que cambie
   useEffect(() => {
@@ -872,13 +873,100 @@ const TeleasistenciaApp = () => {
     if (operatorForm.name.trim() === '') return;
     
     try {
+      // 1. Crear el operador en la colección 'operators'
       const newOperator = await operatorService.create(user.uid, operatorForm);
+      
+      // 2. ⭐ NUEVO: Crear el perfil completo en 'userProfiles' si tiene email
+      if (operatorForm.email && operatorForm.email.trim() !== '') {
+        try {
+          const { userManagementService } = await import('./services/userManagementService');
+          
+          // Verificar si ya existe un perfil con este email
+          const existingProfile = await userManagementService.getUserProfileByEmail(operatorForm.email);
+          
+          if (!existingProfile) {
+            console.log('📝 Creando perfil completo para teleoperadora:', operatorForm.email);
+            
+            // Crear perfil completo de usuario
+            const profileData = {
+              email: operatorForm.email.toLowerCase().trim(),
+              displayName: operatorForm.name.trim(),
+              role: 'teleoperadora',
+              isActive: true,
+              phone: operatorForm.phone || '',
+              createdBy: user.uid,
+              operatorId: newOperator.id, // ⭐ Vincular con el operador
+              authenticationStatus: 'pending',
+              profileType: 'operator_created'
+            };
+            
+            await userManagementService.createUser(profileData);
+            console.log('✅ Perfil completo creado para:', operatorForm.email);
+            showSuccess(`Teleoperadora creada exitosamente. Perfil completo generado para ${operatorForm.email}`);
+          } else {
+            console.log('ℹ️ Ya existe un perfil para:', operatorForm.email);
+            showSuccess(`Teleoperadora creada. Ya existía un perfil para ${operatorForm.email}`);
+          }
+        } catch (profileError) {
+          console.error('⚠️ Error creando perfil de usuario:', profileError);
+          // No fallar la operación completa, solo advertir
+          showInfo(`Teleoperadora creada, pero el perfil de usuario debe configurarse manualmente. Error: ${profileError.message}`);
+        }
+      } else {
+        showSuccess('Teleoperadora creada (sin email, perfil limitado)');
+      }
+      
       setOperators([...operators, newOperator]);
       setOperatorForm({ name: '', email: '', phone: '' });
       setShowCreateOperator(false);
     } catch (error) {
       logger.error('Error creating operator:', error);
       showError('Error al crear el operador. Por favor, inténtelo nuevamente.');
+    }
+  };
+
+  // ⭐ NUEVA FUNCIÓN: Sincronizar operadores existentes con perfiles de usuario
+  const handleSyncExistingOperators = async () => {
+    if (!window.confirm(
+      '¿Sincronizar operadores existentes con perfiles de usuario?\n\n' +
+      'Esto creará perfiles completos para teleoperadoras que fueron creadas sin perfil.\n' +
+      'Las teleoperadoras que ya tengan perfil serán omitidas.'
+    )) {
+      return;
+    }
+
+    setSyncingProfiles(true);
+    
+    try {
+      const { syncOperators } = await import('./sync-existing-operators');
+      
+      console.log('🔄 Iniciando sincronización de perfiles...');
+      const result = await syncOperators();
+      
+      console.log('✅ Sincronización completada:', result);
+      
+      if (result.created > 0) {
+        showSuccess(
+          `✅ Sincronización exitosa: ${result.created} perfil(es) creado(s), ${result.skipped} ya existían`
+        );
+      } else if (result.skipped > 0) {
+        showInfo(
+          `ℹ️ Todas las teleoperadoras ya tienen perfil (${result.skipped} verificadas)`
+        );
+      } else {
+        showInfo('ℹ️ No se encontraron teleoperadoras para sincronizar');
+      }
+      
+      if (result.errors > 0) {
+        showError(
+          `⚠️ ${result.errors} error(es) durante la sincronización. Revise la consola para detalles.`
+        );
+      }
+    } catch (error) {
+      console.error('❌ Error en sincronización:', error);
+      showError(`Error al sincronizar perfiles: ${error.message}`);
+    } finally {
+      setSyncingProfiles(false);
     }
   };
 
@@ -2830,6 +2918,16 @@ const TeleasistenciaApp = () => {
             </p>
           </div>
           <div className="flex gap-3">
+            {/* Botón de sincronización de perfiles */}
+            <button
+              onClick={handleSyncExistingOperators}
+              disabled={syncingProfiles}
+              className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Sincronizar operadores existentes con perfiles de usuario completos"
+            >
+              <RefreshCw className={`w-4 h-4 ${syncingProfiles ? 'animate-spin' : ''}`} />
+              {syncingProfiles ? 'Sincronizando...' : 'Sincronizar Perfiles'}
+            </button>
             {/* Botón de limpieza masiva */}
             <button
               onClick={handleBulkCleanupOperators}
