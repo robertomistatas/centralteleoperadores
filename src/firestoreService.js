@@ -291,11 +291,55 @@ export const assignmentService = {
   // Eliminar asignaciones de un operador
   async deleteOperatorAssignments(userId, operatorId) {
     try {
-      console.log('🗑️ Eliminando asignaciones del operador:', { userId, operatorId });
       const docId = `${userId}_${operatorId}`;
-      await deleteDoc(doc(db, COLLECTIONS.ASSIGNMENTS, docId));
-      console.log('✅ Asignaciones del operador eliminadas exitosamente');
-      return true;
+      console.log('🗑️ Eliminando asignaciones del operador:', { 
+        userId, 
+        operatorId,
+        docId,
+        collection: COLLECTIONS.ASSIGNMENTS
+      });
+      
+      // 🔍 DEBUG: Verificar si el documento existe antes de eliminar
+      const docRef = doc(db, COLLECTIONS.ASSIGNMENTS, docId);
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        console.log('✅ Documento encontrado, procediendo a eliminar:', {
+          docId,
+          data: docSnap.data()
+        });
+        await deleteDoc(docRef);
+        console.log('✅ Asignaciones del operador eliminadas exitosamente');
+        return true;
+      } else {
+        console.warn('⚠️ El documento NO EXISTE en Firebase:', docId);
+        console.log('🔍 Intentando buscar documentos similares...');
+        
+        // Buscar todos los documentos que contengan el operatorId
+        const allDocsSnapshot = await getDocs(collection(db, COLLECTIONS.ASSIGNMENTS));
+        const matchingDocs = [];
+        
+        allDocsSnapshot.forEach(doc => {
+          if (doc.id.includes(operatorId) || doc.data().operatorId === operatorId) {
+            matchingDocs.push({
+              id: doc.id,
+              operatorId: doc.data().operatorId,
+              userId: doc.data().userId,
+              assignmentsCount: doc.data().assignments?.length || 0
+            });
+          }
+        });
+        
+        if (matchingDocs.length > 0) {
+          console.log(`⚠️ Encontrados ${matchingDocs.length} documentos con operatorId similar:`, matchingDocs);
+          console.log('💡 TIP: El documento buscado era:', docId);
+          console.log('💡 Pero existen estos documentos:', matchingDocs.map(d => d.id));
+        } else {
+          console.log('ℹ️ No hay documentos para este operador (ya eliminado o nunca existió)');
+        }
+        
+        return true; // No es un error crítico
+      }
     } catch (error) {
       // Si el documento no existe, no es un error crítico
       if (error.code === 'not-found') {

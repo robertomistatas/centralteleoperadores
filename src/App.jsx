@@ -1248,10 +1248,16 @@ const TeleasistenciaApp = () => {
   const clearOperatorAssignments = async (operatorId) => {
     try {
       console.log('🗑️ Iniciando limpieza de asignaciones para operador:', operatorId);
+      console.log('📋 DEBUG - Información de eliminación:', {
+        userId: user.uid,
+        userEmail: user.email,
+        operatorId: operatorId,
+        docIdAEliminar: `${user.uid}_${operatorId}`
+      });
       
       // 1. Eliminar de Firestore (fuente de verdad)
-      await assignmentService.deleteOperatorAssignments(user.uid, operatorId);
-      console.log('✅ Eliminado de Firestore');
+      const deleteResult = await assignmentService.deleteOperatorAssignments(user.uid, operatorId);
+      console.log('✅ Resultado eliminación Firestore:', deleteResult);
       
       // 2. Eliminar del estado local
       const newAssignments = { ...operatorAssignments };
