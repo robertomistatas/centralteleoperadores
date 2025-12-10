@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, BarChart3, PieChart, Calendar, AlertCircle, Plus, Edit, Trash2, UserPlus, FileSpreadsheet, Save, X, LogOut, User, Zap, Database, Activity, Settings, GitCompare } from 'lucide-react';
+import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, BarChart3, PieChart, Calendar, AlertCircle, Plus, Edit, Trash2, UserPlus, FileSpreadsheet, Save, X, LogOut, User, Zap, Database, Activity, Settings, GitCompare, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useAuth } from './AuthContext';
 import { operatorService, assignmentService, callDataService, resetErrorState } from './firestoreService';
@@ -149,6 +149,7 @@ const TeleasistenciaApp = () => {
   const [operatorForm, setOperatorForm] = useState({ name: '', email: '', phone: '' });
   const [operatorAssignments, setOperatorAssignments] = useState({});
   const [uploadingFor, setUploadingFor] = useState(null);
+  const [syncingProfiles, setSyncingProfiles] = useState(false); // ⭐ Estado para sincronización de perfiles
   
   // 🔥 SINCRONIZACIÓN AUTOMÁTICA: Sincronizar estado local con Zustand cada vez que cambie
   useEffect(() => {
@@ -156,7 +157,7 @@ const TeleasistenciaApp = () => {
       // console.log('🔄 Sincronizando operators locales con Zustand:', operators.length);
       setZustandOperators(operators);
     }
-  }, [operators.length, zustandOperators.length, setZustandOperators]);
+  }, [operators.length]); // ✅ FIX: Solo operators.length
   
   useEffect(() => {
     const assignmentsCount = Object.keys(operatorAssignments).length;
@@ -165,12 +166,13 @@ const TeleasistenciaApp = () => {
       // console.log('🔄 Sincronizando operatorAssignments locales con Zustand:', assignmentsCount);
       setZustandOperatorAssignments(operatorAssignments);
     }
-  }, [Object.keys(operatorAssignments).length, Object.keys(zustandOperatorAssignments).length, setZustandOperatorAssignments]);
+  }, [Object.keys(operatorAssignments).length]); // ✅ FIX: Solo operatorAssignments
   
   // Estados para búsqueda de beneficiarios
   const [showBeneficiarySearch, setShowBeneficiarySearch] = useState(false);
   const [beneficiarySearchTerm, setBeneficiarySearchTerm] = useState('');
   const [beneficiarySearchResults, setBeneficiarySearchResults] = useState([]);
+  const searchInputRef = useRef(null); // ✅ Ref para mantener foco
 
   // Datos de ejemplo para las asignaciones
   const sampleAssignments = [
@@ -871,13 +873,100 @@ const TeleasistenciaApp = () => {
     if (operatorForm.name.trim() === '') return;
     
     try {
+      // 1. Crear el operador en la colección 'operators'
       const newOperator = await operatorService.create(user.uid, operatorForm);
+      
+      // 2. ⭐ NUEVO: Crear el perfil completo en 'userProfiles' si tiene email
+      if (operatorForm.email && operatorForm.email.trim() !== '') {
+        try {
+          const { userManagementService } = await import('./services/userManagementService');
+          
+          // Verificar si ya existe un perfil con este email
+          const existingProfile = await userManagementService.getUserProfileByEmail(operatorForm.email);
+          
+          if (!existingProfile) {
+            console.log('📝 Creando perfil completo para teleoperadora:', operatorForm.email);
+            
+            // Crear perfil completo de usuario
+            const profileData = {
+              email: operatorForm.email.toLowerCase().trim(),
+              displayName: operatorForm.name.trim(),
+              role: 'teleoperadora',
+              isActive: true,
+              phone: operatorForm.phone || '',
+              createdBy: user.uid,
+              operatorId: newOperator.id, // ⭐ Vincular con el operador
+              authenticationStatus: 'pending',
+              profileType: 'operator_created'
+            };
+            
+            await userManagementService.createUser(profileData);
+            console.log('✅ Perfil completo creado para:', operatorForm.email);
+            showSuccess(`Teleoperadora creada exitosamente. Perfil completo generado para ${operatorForm.email}`);
+          } else {
+            console.log('ℹ️ Ya existe un perfil para:', operatorForm.email);
+            showSuccess(`Teleoperadora creada. Ya existía un perfil para ${operatorForm.email}`);
+          }
+        } catch (profileError) {
+          console.error('⚠️ Error creando perfil de usuario:', profileError);
+          // No fallar la operación completa, solo advertir
+          showInfo(`Teleoperadora creada, pero el perfil de usuario debe configurarse manualmente. Error: ${profileError.message}`);
+        }
+      } else {
+        showSuccess('Teleoperadora creada (sin email, perfil limitado)');
+      }
+      
       setOperators([...operators, newOperator]);
       setOperatorForm({ name: '', email: '', phone: '' });
       setShowCreateOperator(false);
     } catch (error) {
       logger.error('Error creating operator:', error);
       showError('Error al crear el operador. Por favor, inténtelo nuevamente.');
+    }
+  };
+
+  // ⭐ NUEVA FUNCIÓN: Sincronizar operadores existentes con perfiles de usuario
+  const handleSyncExistingOperators = async () => {
+    if (!window.confirm(
+      '¿Sincronizar operadores existentes con perfiles de usuario?\n\n' +
+      'Esto creará perfiles completos para teleoperadoras que fueron creadas sin perfil.\n' +
+      'Las teleoperadoras que ya tengan perfil serán omitidas.'
+    )) {
+      return;
+    }
+
+    setSyncingProfiles(true);
+    
+    try {
+      const { syncOperators } = await import('./utils/sync-existing-operators');
+      
+      console.log('🔄 Iniciando sincronización de perfiles...');
+      const result = await syncOperators();
+      
+      console.log('✅ Sincronización completada:', result);
+      
+      if (result.created > 0) {
+        showSuccess(
+          `✅ Sincronización exitosa: ${result.created} perfil(es) creado(s), ${result.skipped} ya existían`
+        );
+      } else if (result.skipped > 0) {
+        showInfo(
+          `ℹ️ Todas las teleoperadoras ya tienen perfil (${result.skipped} verificadas)`
+        );
+      } else {
+        showInfo('ℹ️ No se encontraron teleoperadoras para sincronizar');
+      }
+      
+      if (result.errors > 0) {
+        showError(
+          `⚠️ ${result.errors} error(es) durante la sincronización. Revise la consola para detalles.`
+        );
+      }
+    } catch (error) {
+      console.error('❌ Error en sincronización:', error);
+      showError(`Error al sincronizar perfiles: ${error.message}`);
+    } finally {
+      setSyncingProfiles(false);
     }
   };
 
@@ -1065,20 +1154,49 @@ const TeleasistenciaApp = () => {
     if (!operator) return;
 
     const processedData = data.slice(1).map((row, index) => {
-      // Procesar teléfonos (separados por |, - o espacios)
-      const phones = row[1] ? String(row[1]).split(/[\|\-\s]+/).filter(phone => phone.trim().length === 9) : [];
+      // ⭐ BUGFIX: Procesar teléfonos separados por |, -, espacios, comas o punto y coma
+      const rawPhones = row[1] ? String(row[1]).split(/[\|\-\s,;]+/) : [];
+      
+      // ⭐ BUGFIX: Limpiar y validar teléfonos (8-10 dígitos, no exactamente 9)
+      const phones = rawPhones
+        .map(phone => phone.trim().replace(/\D/g, '')) // Eliminar no-dígitos
+        .filter(phone => phone.length >= 8 && phone.length <= 10); // Aceptar 8-10 dígitos
+      
+      const beneficiaryName = row[0] ? String(row[0]).trim() : '';
       
       return {
         id: `${operatorId}-${index}`,
         operatorId: operatorId,
         operatorName: operator.name,
         operatorEmail: operator.email || '', // ✅ Agregar email del operador
-        beneficiary: row[0] || '',
+        beneficiary: beneficiaryName,
         phones: phones,
         primaryPhone: phones[0] || '',
         commune: row[2] || ''
       };
-    }).filter(item => item.beneficiary && item.primaryPhone);
+    }).filter(item => item.beneficiary); // ⭐ BUGFIX: Solo requerir beneficiary, no primaryPhone
+
+    // ⭐ LOGGING DETALLADO: Información de procesamiento
+    const totalRowsInExcel = data.length - 1; // -1 por header
+    const sinNombre = totalRowsInExcel - processedData.length;
+    const sinTelefono = processedData.filter(item => !item.primaryPhone).length;
+    
+    logger.info('📊 [UPLOAD] Resumen de carga de beneficiarios', {
+      operador: operator.name,
+      totalFilasExcel: totalRowsInExcel,
+      beneficiariosValidos: processedData.length,
+      sinNombre: sinNombre,
+      sinTelefono: sinTelefono,
+      conTelefono: processedData.length - sinTelefono
+    });
+    
+    console.log('📊 RESUMEN DE CARGA:');
+    console.log(`   Operadora: ${operator.name}`);
+    console.log(`   Total filas en Excel: ${totalRowsInExcel}`);
+    console.log(`   ✅ Beneficiarios procesados: ${processedData.length}`);
+    console.log(`   ❌ Sin nombre (descartados): ${sinNombre}`);
+    console.log(`   ⚠️ Sin teléfono válido: ${sinTelefono}`);
+    console.log(`   ✓ Con teléfono válido: ${processedData.length - sinTelefono}`);
 
     try {
       // Guardar en Firestore
@@ -1106,8 +1224,14 @@ const TeleasistenciaApp = () => {
         return [...filteredPrev, ...newGeneralAssignments];
       });
 
+      // ⭐ BUGFIX: Actualizar Zustand store para evitar duplicación después de refresh
+      const currentZustandAssignments = { ...zustandOperatorAssignments };
+      currentZustandAssignments[operatorId] = processedData;
+      setZustandOperatorAssignments(currentZustandAssignments);
+      console.log('✅ Zustand store actualizado con nuevas asignaciones');
+
       setUploadingFor(null);
-      showSuccess('Asignaciones guardadas correctamente');
+      showSuccess(`Asignaciones guardadas: ${processedData.length} beneficiarios`);
     } catch (error) {
       logger.error('Error saving assignments:', error);
       showError('Error al guardar las asignaciones. Por favor, inténtelo nuevamente.');
@@ -1116,15 +1240,32 @@ const TeleasistenciaApp = () => {
 
   const clearOperatorAssignments = async (operatorId) => {
     try {
-      await assignmentService.deleteOperatorAssignments(user.uid, operatorId);
+      console.log('🗑️ Iniciando limpieza de asignaciones para operador:', operatorId);
       
+      // 1. Eliminar de Firestore
+      await assignmentService.deleteOperatorAssignments(user.uid, operatorId);
+      console.log('✅ Eliminado de Firestore');
+      
+      // 2. Eliminar del estado local
       const newAssignments = { ...operatorAssignments };
       delete newAssignments[operatorId];
       setOperatorAssignments(newAssignments);
+      console.log('✅ Eliminado del estado local');
 
-      // También eliminar de assignments generales
+      // 3. Eliminar de assignments generales
       setAssignments(prev => prev.filter(a => !a.id.toString().startsWith(`${operatorId}-`)));
+      console.log('✅ Eliminado de assignments generales');
+      
+      // 4. ⭐ BUGFIX: Eliminar del Zustand store
+      const currentZustandAssignments = { ...zustandOperatorAssignments };
+      delete currentZustandAssignments[operatorId];
+      setZustandOperatorAssignments(currentZustandAssignments);
+      console.log('✅ Eliminado del Zustand store');
+      
       showSuccess('Asignaciones limpiadas correctamente');
+      
+      // NO recargamos datos - ya eliminamos de todos los estados necesarios
+      // Firestore ✓, Estado local ✓, Assignments ✓, Zustand ✓
     } catch (error) {
       logger.error('Error clearing assignments:', error);
       showError('Error al limpiar las asignaciones. Por favor, inténtelo nuevamente.');
@@ -1186,7 +1327,7 @@ const TeleasistenciaApp = () => {
   };
 
   // Función para buscar beneficiarios en las asignaciones
-  const searchBeneficiaries = (searchTerm) => {
+  const searchBeneficiaries = useCallback((searchTerm) => {
     if (!searchTerm.trim()) {
       setBeneficiarySearchResults([]);
       return;
@@ -1292,7 +1433,7 @@ const TeleasistenciaApp = () => {
     
     console.log('🎯 Resultados filtrados:', filteredResults.length);
     setBeneficiarySearchResults(filteredResults);
-  };
+  }, [operatorAssignments, operators, getZustandAllAssignments]); // ✅ FIX: Agregar dependencias
 
   // Ref para el timeout del debouncing
   const searchTimeoutRef = useRef(null);
@@ -1307,9 +1448,14 @@ const TeleasistenciaApp = () => {
   }, []);
 
   // Manejar cambio en el término de búsqueda con debouncing
-  const handleBeneficiarySearch = (term) => {
+  const handleBeneficiarySearch = useCallback((term) => {
     // Actualizar inmediatamente el estado del input para que sea responsive
     setBeneficiarySearchTerm(term);
+    
+    // Mantener el foco en el input
+    if (searchInputRef.current && document.activeElement !== searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
     
     // Limpiar timeout anterior
     if (searchTimeoutRef.current) {
@@ -1326,7 +1472,7 @@ const TeleasistenciaApp = () => {
     searchTimeoutRef.current = setTimeout(() => {
       searchBeneficiaries(term);
     }, 300);
-  };
+  }, [searchBeneficiaries]);
 
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
@@ -2532,10 +2678,17 @@ const TeleasistenciaApp = () => {
     const [syncedProfile, setSyncedProfile] = React.useState(null);
     const [profileLoading, setProfileLoading] = React.useState(false);
     const [lastSync, setLastSync] = React.useState(null);
+    const [profileNotFound, setProfileNotFound] = React.useState(false); // ⭐ Cache para perfiles no encontrados
     
     // Función para cargar perfil (reutilizable)
     const loadProfile = React.useCallback(async (forceReload = false) => {
       if (!operator) return;
+      
+      // ⭐ BUGFIX: No buscar si ya sabemos que el perfil no existe
+      if (profileNotFound && !forceReload) {
+        console.log('⏭️ Perfil previamente no encontrado, saltando búsqueda:', operator.email);
+        return;
+      }
       
       // Si ya tenemos un perfil reciente y no es forzado, no recargar
       if (syncedProfile && lastSync && !forceReload) {
@@ -2568,13 +2721,18 @@ const TeleasistenciaApp = () => {
           console.log('✅ Perfil sincronizado:', profile.email);
           setSyncedProfile(profile);
           setLastSync(Date.now());
+          setProfileNotFound(false); // ⭐ Resetear cache si se encuentra
+        } else {
+          // ⭐ BUGFIX: Marcar como no encontrado para evitar búsquedas repetidas
+          console.log('⚠️ Perfil no encontrado, marcando en cache:', operator.email);
+          setProfileNotFound(true);
         }
       } catch (error) {
         console.error('❌ Error cargando perfil:', error);
       } finally {
         setProfileLoading(false);
       }
-    }, [operator, syncedProfile, lastSync]);
+    }, [operator]); // ⭐ BUGFIX: Eliminar syncedProfile y lastSync de dependencias
     
     // Cargar perfil al montar o cuando cambie el operador
     React.useEffect(() => {
@@ -2760,6 +2918,16 @@ const TeleasistenciaApp = () => {
             </p>
           </div>
           <div className="flex gap-3">
+            {/* Botón de sincronización de perfiles */}
+            <button
+              onClick={handleSyncExistingOperators}
+              disabled={syncingProfiles}
+              className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Sincronizar operadores existentes con perfiles de usuario completos"
+            >
+              <RefreshCw className={`w-4 h-4 ${syncingProfiles ? 'animate-spin' : ''}`} />
+              {syncingProfiles ? 'Sincronizando...' : 'Sincronizar Perfiles'}
+            </button>
             {/* Botón de limpieza masiva */}
             <button
               onClick={handleBulkCleanupOperators}
@@ -2840,13 +3008,14 @@ const TeleasistenciaApp = () => {
             <div className="flex gap-4 items-center">
               <div className="flex-1">
                 <input
+                  ref={searchInputRef}
+                  key="beneficiary-search-input"
                   type="text"
                   placeholder="Buscar por nombre del beneficiario, teleoperadora, teléfono o comuna..."
                   value={beneficiarySearchTerm}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    handleBeneficiarySearch(value);
-                  }}
+                  onInput={(e) => handleBeneficiarySearch(e.target.value)}
+                  autoComplete="off"
+                  autoFocus
                   className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -2950,7 +3119,7 @@ const TeleasistenciaApp = () => {
                 <input
                   type="text"
                   value={operatorForm.name}
-                  onChange={(e) => setOperatorForm({...operatorForm, name: e.target.value})}
+                  onChange={(e) => setOperatorForm(prev => ({...prev, name: e.target.value}))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="Ej: María González"
                 />
@@ -2963,7 +3132,7 @@ const TeleasistenciaApp = () => {
                 <input
                   type="email"
                   value={operatorForm.email}
-                  onChange={(e) => setOperatorForm({...operatorForm, email: e.target.value})}
+                  onChange={(e) => setOperatorForm(prev => ({...prev, email: e.target.value}))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="maria.gonzalez@central.cl"
                 />
@@ -2976,7 +3145,7 @@ const TeleasistenciaApp = () => {
                 <input
                   type="tel"
                   value={operatorForm.phone}
-                  onChange={(e) => setOperatorForm({...operatorForm, phone: e.target.value})}
+                  onChange={(e) => setOperatorForm(prev => ({...prev, phone: e.target.value}))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="987654321"
                 />

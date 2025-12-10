@@ -14,6 +14,7 @@ const useDashboardStore = create(
       isLoading: false,
       dataLoaded: false,
       lastLoadedEmail: null, // Para saber si cambió el usuario
+      lastCallStoreUpdate: null, // ✅ NUEVO: Timestamp del último update del CallStore
       
       // Acciones
       setBeneficiarios: (beneficiarios) => {
@@ -30,15 +31,18 @@ const useDashboardStore = create(
       
       setDataLoaded: (dataLoaded, userEmail = null) => {
         console.log('📦 [DASHBOARD STORE] Marcando datos como cargados para:', userEmail);
+        // ✅ NUEVO: Guardar timestamp del CallStore al marcar como cargado
+        const callStoreUpdate = typeof window !== 'undefined' && window.__callStoreLastUpdate__;
         set({ 
           dataLoaded,
-          lastLoadedEmail: userEmail 
+          lastLoadedEmail: userEmail,
+          lastCallStoreUpdate: callStoreUpdate || Date.now()
         });
       },
       
-      // Verificar si necesitamos recargar (usuario cambió)
+      // Verificar si necesitamos recargar (usuario cambió o datos nuevos en CallStore)
       needsReload: (currentUserEmail) => {
-        const { lastLoadedEmail, dataLoaded, beneficiarios } = get();
+        const { lastLoadedEmail, dataLoaded, beneficiarios, lastCallStoreUpdate } = get();
         
         // Si no hay datos cargados, necesitamos recargar
         if (!dataLoaded || beneficiarios.length === 0) {
@@ -49,6 +53,16 @@ const useDashboardStore = create(
         // Si el usuario cambió, necesitamos recargar
         if (lastLoadedEmail !== currentUserEmail) {
           console.log('📦 [DASHBOARD STORE] Necesita recarga: usuario cambió de', lastLoadedEmail, 'a', currentUserEmail);
+          return true;
+        }
+        
+        // ✅ NUEVO: Verificar si hay datos nuevos en el CallStore
+        const currentCallStoreUpdate = typeof window !== 'undefined' && window.__callStoreLastUpdate__;
+        if (currentCallStoreUpdate && lastCallStoreUpdate && currentCallStoreUpdate !== lastCallStoreUpdate) {
+          console.log('📦 [DASHBOARD STORE] Necesita recarga: nuevos datos en CallStore', {
+            anterior: lastCallStoreUpdate,
+            actual: currentCallStoreUpdate
+          });
           return true;
         }
         
@@ -64,7 +78,17 @@ const useDashboardStore = create(
           seguimientos: [],
           isLoading: false,
           dataLoaded: false,
-          lastLoadedEmail: null
+          lastLoadedEmail: null,
+          lastCallStoreUpdate: null
+        });
+      },
+      
+      // ✅ NUEVO: Forzar recarga de datos (útil cuando se detectan cambios en CallStore)
+      invalidateCache: () => {
+        console.log('📦 [DASHBOARD STORE] Invalidando caché, forzando recarga...');
+        set({
+          dataLoaded: false,
+          lastCallStoreUpdate: null
         });
       }
     }),

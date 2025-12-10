@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { normalizeCallDirection } from '../utils/dataNormalizer'; // ⭐ FASE 6.1: Nueva importación
 
 /**
  * Store OPTIMIZADO para manejo de datos de auditoría de llamadas
@@ -52,6 +53,12 @@ const useCallStore = create(
       // Acciones principales para auditoría
       setCallData: (data, source = 'excel') => {
         const timestamp = new Date().toISOString();
+        
+        // ✅ CORRECCIÓN CRÍTICA: Notificar a otros stores sobre datos nuevos
+        if (typeof window !== 'undefined') {
+          window.__callStoreLastUpdate__ = timestamp;
+          console.log('🔔 [CALLSTORE] Notificando cambio de datos a otros módulos:', timestamp);
+        }
         
         // CORRECCIÓN: Limpiar cachés cuando llegan nuevos datos
         set({
@@ -136,10 +143,26 @@ const useCallStore = create(
             // CORRECCIÓN EXACTA: Solo considerar exitoso si es exactamente "Llamado exitoso"
             const result = call.resultado || call.result || call.estado || '';
             
-            // Una llamada es exitosa solo si:
-            // 1. El resultado es exactamente "Llamado exitoso" Y
-            // 2. Tiene duración > 0 (para validar consistencia)
-            const isSuccessful = (result === 'Llamado exitoso' || result === 'exitoso' || result === 'Exitoso') && duration > 0;
+            // ⭐ FASE 6.1: Nueva lógica de seguimiento válido
+            // Una llamada es válida si:
+            // 1. Es SALIENTE con resultado EXITOSO (lógica actual) O
+            // 2. Es ENTRANTE (independiente del resultado)
+            const tipoLlamada = call.tipo_llamada || 
+                              call.callDirection || 
+                              call.tipoLlamada || 
+                              call.direction || 
+                              '';
+            const normalizedDirection = normalizeCallDirection(tipoLlamada);
+            
+            const isSuccessful = (
+              // Política 1: Saliente exitosa
+              (normalizedDirection === 'saliente' && 
+               (result === 'Llamado exitoso' || result === 'exitoso' || result === 'Exitoso') && 
+               duration > 0)
+              ||
+              // Política 2: Entrante (siempre válida)
+              (normalizedDirection === 'entrante')
+            );
             
             return {
               ...call,
@@ -149,6 +172,7 @@ const useCallStore = create(
               phone,
               date,
               duration,
+              callDirection: normalizedDirection, // ⭐ FASE 6.1: Añadir dirección normalizada
               isSuccessful,
               categoria: isSuccessful ? 'exitosa' : 'fallida'
             };

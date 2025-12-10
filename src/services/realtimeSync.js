@@ -495,31 +495,151 @@ export const getListenersStatus = () => {
  * Fuerza una actualización manual de métricas
  * Sin esperar cambios en Firestore
  * 
- * @param {string} collection - Colección a actualizar ('excel' | 'seguimientos' | 'all')
+ * @param {string} collection - Colección a actualizar ('excel' | 'seguimientos' | 'metrics' | 'all')
  */
 export const forceMetricsUpdate = async (collection = 'all') => {
-  logger.info('[RealtimeSync] Forzando actualización de métricas', { collection });
+  logger.info('[RealtimeSync] 🔄 Forzando actualización de métricas', { collection });
 
   try {
+    const { getDocs } = await import('firebase/firestore');
+    const { collection: firestoreCollection, doc: firestoreDoc, getDoc } = await import('firebase/firestore');
+    
+    // ===== 1. ACTUALIZACIÓN DE EXCEL =====
     if (collection === 'excel' || collection === 'all') {
-      // Trigger manual del listener de Excel
-      const { getDocs } = await import('firebase/firestore');
-      const { collection: firestoreCollection } = await import('firebase/firestore');
+      logger.info('[RealtimeSync] Actualizando métricas de Excel...');
       
       const snapshot = await getDocs(firestoreCollection(db, 'analisisExcel'));
       const allAnalyses = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       const allRecords = allAnalyses.flatMap(a => a.rawData || a.fullData || []);
       const metrics = computeGlobalMetrics(allRecords);
       
-      useMetricsStore.getState().setExcelAnalysisMetrics?.(metrics);
+      const setExcelMetrics = useMetricsStore.getState().setExcelAnalysisMetrics;
+      if (setExcelMetrics) {
+        setExcelMetrics(metrics);
+        logger.info('[RealtimeSync] ✅ Métricas de Excel actualizadas', {
+          total: metrics.total,
+          exitosas: metrics.exitosas
+        });
+      }
+      
+      // También actualizar allAnalyses
+      const state = useMetricsStore.getState();
+      if (state.allAnalyses !== allAnalyses) {
+        useMetricsStore.setState({ allAnalyses });
+        logger.info('[RealtimeSync] ✅ allAnalyses actualizado', {
+          count: allAnalyses.length
+        });
+      }
+    }
+    
+    // ===== 2. ACTUALIZACIÓN DE SEGUIMIENTOS =====
+    if (collection === 'seguimientos' || collection === 'all') {
+      logger.info('[RealtimeSync] Actualizando métricas de seguimientos...');
+      
+      const snapshot = await getDocs(firestoreCollection(db, 'seguimientos'));
+      const allSeguimientos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const metrics = computeGlobalMetrics(allSeguimientos);
+      
+      const setSeguimientosMetrics = useMetricsStore.getState().setSeguimientosMetrics;
+      if (setSeguimientosMetrics) {
+        setSeguimientosMetrics(metrics);
+        logger.info('[RealtimeSync] ✅ Métricas de seguimientos actualizadas', {
+          total: metrics.total,
+          exitosas: metrics.exitosas
+        });
+      }
+    }
+    
+    // ===== 3. ACTUALIZACIÓN DE MÉTRICAS GLOBALES =====
+    if (collection === 'metrics' || collection === 'all') {
+      logger.info('[RealtimeSync] Actualizando métricas globales...');
+      
+      // Métricas globales
+      const globalDoc = await getDoc(firestoreDoc(db, 'metrics', 'global'));
+      if (globalDoc.exists()) {
+        const data = globalDoc.data();
+        if (data.lastUpdated?.toDate) {
+          data.lastUpdated = data.lastUpdated.toDate();
+        }
+        useMetricsStore.setState({ globalMetrics: data });
+        logger.info('[RealtimeSync] ✅ Métricas globales actualizadas');
+      }
+      
+      // Métricas de teleoperadoras
+      const operatorsSnapshot = await getDocs(firestoreCollection(db, 'metrics', 'teleoperadoras', 'operators'));
+      const operatorsData = {};
+      operatorsSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        if (data.lastUpdated?.toDate) {
+          data.lastUpdated = data.lastUpdated.toDate();
+        }
+        if (data.calls && Array.isArray(data.calls)) {
+          data.calls = data.calls.map(call => ({
+            ...call,
+            fecha: call.fecha?.toDate ? call.fecha.toDate() : call.fecha
+          }));
+        }
+        operatorsData[doc.id] = data;
+      });
+      useMetricsStore.setState({ teleoperadorasMetrics: operatorsData });
+      logger.info('[RealtimeSync] ✅ Métricas de teleoperadoras actualizadas', {
+        count: Object.keys(operatorsData).length
+      });
+      
+      // Métricas de beneficiarios
+      const beneficiariesSnapshot = await getDocs(firestoreCollection(db, 'metrics', 'beneficiarios', 'beneficiaries'));
+      const beneficiariesData = {};
+      beneficiariesSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        if (data.lastUpdated?.toDate) {
+          data.lastUpdated = data.lastUpdated.toDate();
+        }
+        if (data.lastCall?.toDate) {
+          data.lastCall = data.lastCall.toDate();
+        }
+        if (data.lastSuccessfulCall?.toDate) {
+          data.lastSuccessfulCall = data.lastSuccessfulCall.toDate();
+        }
+        beneficiariesData[doc.id] = data;
+      });
+      useMetricsStore.setState({ beneficiariosMetrics: beneficiariesData });
+      logger.info('[RealtimeSync] ✅ Métricas de beneficiarios actualizadas', {
+        count: Object.keys(beneficiariesData).length
+      });
+      
+      // Métricas de no asignados
+      const noAsignadosDoc = await getDoc(firestoreDoc(db, 'metrics', 'noAsignados'));
+      if (noAsignadosDoc.exists()) {
+        const data = noAsignadosDoc.data();
+        if (data.lastUpdated?.toDate) {
+          data.lastUpdated = data.lastUpdated.toDate();
+        }
+        if (data.beneficiaries && Array.isArray(data.beneficiaries)) {
+          data.beneficiaries = data.beneficiaries.map(beneficiary => ({
+            ...beneficiary,
+            lastCall: beneficiary.lastCall?.toDate ? beneficiary.lastCall.toDate() : beneficiary.lastCall
+          }));
+        }
+        useMetricsStore.setState({ noAsignadosMetrics: data });
+        logger.info('[RealtimeSync] ✅ Métricas de no asignados actualizadas');
+      }
     }
 
     logger.audit('Manual metrics update forced', {
       collection,
+      timestamp: new Date().toISOString(),
+      success: true
+    });
+    
+    logger.info('[RealtimeSync] ✅ Actualización forzada completada', { collection });
+    
+  } catch (error) {
+    logger.error('[RealtimeSync] ❌ Error al forzar actualización', error);
+    logger.audit('Manual metrics update failed', {
+      collection,
+      error: error.message,
       timestamp: new Date().toISOString()
     });
-  } catch (error) {
-    logger.error('[RealtimeSync] Error al forzar actualización', error);
   }
 };
 

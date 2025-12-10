@@ -25,7 +25,9 @@ import {
   normalizeRecords,
   groupByOperator,
   groupByResult,
-  groupByDate
+  groupByDate,
+  isValidCall,           // ⭐ FASE 6.1: Nueva importación
+  getValidFollowups      // ⭐ FASE 6.1: Nueva importación
 } from '../utils/dataNormalizer.js';
 import { measurePerformance } from '../utils/performanceMonitor.js';
 
@@ -72,14 +74,21 @@ const computeGlobalMetricsInternal = (records = [], options = {}) => {
     return getEmptyMetrics();
   }
 
-  // Totales básicos
+  // ⭐ FASE 6.1: Calcular seguimientos válidos según nueva política
+  const validFollowups = getValidFollowups(normalizedRecords);
+  const totalSeguimientosValidos = validFollowups.length;
+  
+  // Totales básicos (clasificación por resultado)
   const total = normalizedRecords.length;
   const byResult = groupByResult(normalizedRecords);
   const exitosas = byResult.exitosas.length;
   const fallidas = byResult.fallidas.length;
   const sinIdentificar = byResult.sinIdentificar.length;
 
-  // Tasa de éxito
+  // ⭐ FASE 6.1: Tasas basadas en seguimientos válidos (nueva métrica empresarial)
+  const tasaSeguimientosValidos = total > 0 ? (totalSeguimientosValidos / total) * 100 : 0;
+  
+  // Tasas tradicionales (por resultado)
   const tasaExito = total > 0 ? (exitosas / total) * 100 : 0;
   const tasaFallida = total > 0 ? (fallidas / total) * 100 : 0;
 
@@ -149,6 +158,7 @@ const computeGlobalMetricsInternal = (records = [], options = {}) => {
     total,
     exitosas,
     fallidas,
+    seguimientosValidos: totalSeguimientosValidos, // ⭐ FASE 6.1
     operadoras: Object.keys(porOperadora).length,
     beneficiarios: uniqueBeneficiaries.size,
     elapsedTime: `${elapsedTime}ms`
@@ -161,9 +171,14 @@ const computeGlobalMetricsInternal = (records = [], options = {}) => {
     fallidas,
     sinIdentificar,
     
+    // ⭐ FASE 6.1: Nueva métrica empresarial
+    seguimientosValidos: totalSeguimientosValidos,
+    validFollowups: validFollowups, // Array completo para análisis detallado
+    
     // Tasas
     tasaExito: parseFloat(tasaExito.toFixed(2)),
     tasaFallida: parseFloat(tasaFallida.toFixed(2)),
+    tasaSeguimientosValidos: parseFloat(tasaSeguimientosValidos.toFixed(2)), // ⭐ FASE 6.1
     
     // Por operadora
     porOperadora,
