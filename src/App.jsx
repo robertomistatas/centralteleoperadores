@@ -938,7 +938,7 @@ const TeleasistenciaApp = () => {
     setSyncingProfiles(true);
     
     try {
-      const { syncOperators } = await import('./sync-existing-operators');
+      const { syncOperators } = await import('./utils/sync-existing-operators');
       
       console.log('🔄 Iniciando sincronización de perfiles...');
       const result = await syncOperators();

@@ -19,11 +19,7 @@
 
 // Este script usa las instancias de Firebase ya inicializadas en la app
 import { collection, getDocs, doc, setDoc, query, where } from 'firebase/firestore';
-import { db, auth } from './firebase';
-
-// Este script usa las instancias de Firebase ya inicializadas en la app
-import { collection, getDocs, doc, setDoc, query, where } from 'firebase/firestore';
-import { db, auth } from './firebase';
+import { db, auth } from '../firebase';
 
 /**
  * Buscar perfil por email
