@@ -1136,6 +1136,12 @@ const TeleasistenciaApp = () => {
         return [...filteredPrev, ...newGeneralAssignments];
       });
 
+      // ⭐ BUGFIX: Actualizar Zustand store para evitar duplicación después de refresh
+      const currentZustandAssignments = { ...zustandOperatorAssignments };
+      currentZustandAssignments[operatorId] = processedData;
+      setZustandOperatorAssignments(currentZustandAssignments);
+      console.log('✅ Zustand store actualizado con nuevas asignaciones');
+
       setUploadingFor(null);
       showSuccess(`Asignaciones guardadas: ${processedData.length} beneficiarios`);
     } catch (error) {
@@ -1146,15 +1152,32 @@ const TeleasistenciaApp = () => {
 
   const clearOperatorAssignments = async (operatorId) => {
     try {
-      await assignmentService.deleteOperatorAssignments(user.uid, operatorId);
+      console.log('🗑️ Iniciando limpieza de asignaciones para operador:', operatorId);
       
+      // 1. Eliminar de Firestore
+      await assignmentService.deleteOperatorAssignments(user.uid, operatorId);
+      console.log('✅ Eliminado de Firestore');
+      
+      // 2. Eliminar del estado local
       const newAssignments = { ...operatorAssignments };
       delete newAssignments[operatorId];
       setOperatorAssignments(newAssignments);
+      console.log('✅ Eliminado del estado local');
 
-      // También eliminar de assignments generales
+      // 3. Eliminar de assignments generales
       setAssignments(prev => prev.filter(a => !a.id.toString().startsWith(`${operatorId}-`)));
+      console.log('✅ Eliminado de assignments generales');
+      
+      // 4. ⭐ BUGFIX: Eliminar del Zustand store
+      const currentZustandAssignments = { ...zustandOperatorAssignments };
+      delete currentZustandAssignments[operatorId];
+      setZustandOperatorAssignments(currentZustandAssignments);
+      console.log('✅ Eliminado del Zustand store');
+      
       showSuccess('Asignaciones limpiadas correctamente');
+      
+      // NO recargamos datos - ya eliminamos de todos los estados necesarios
+      // Firestore ✓, Estado local ✓, Assignments ✓, Zustand ✓
     } catch (error) {
       logger.error('Error clearing assignments:', error);
       showError('Error al limpiar las asignaciones. Por favor, inténtelo nuevamente.');
@@ -2567,10 +2590,17 @@ const TeleasistenciaApp = () => {
     const [syncedProfile, setSyncedProfile] = React.useState(null);
     const [profileLoading, setProfileLoading] = React.useState(false);
     const [lastSync, setLastSync] = React.useState(null);
+    const [profileNotFound, setProfileNotFound] = React.useState(false); // ⭐ Cache para perfiles no encontrados
     
     // Función para cargar perfil (reutilizable)
     const loadProfile = React.useCallback(async (forceReload = false) => {
       if (!operator) return;
+      
+      // ⭐ BUGFIX: No buscar si ya sabemos que el perfil no existe
+      if (profileNotFound && !forceReload) {
+        console.log('⏭️ Perfil previamente no encontrado, saltando búsqueda:', operator.email);
+        return;
+      }
       
       // Si ya tenemos un perfil reciente y no es forzado, no recargar
       if (syncedProfile && lastSync && !forceReload) {
@@ -2603,13 +2633,18 @@ const TeleasistenciaApp = () => {
           console.log('✅ Perfil sincronizado:', profile.email);
           setSyncedProfile(profile);
           setLastSync(Date.now());
+          setProfileNotFound(false); // ⭐ Resetear cache si se encuentra
+        } else {
+          // ⭐ BUGFIX: Marcar como no encontrado para evitar búsquedas repetidas
+          console.log('⚠️ Perfil no encontrado, marcando en cache:', operator.email);
+          setProfileNotFound(true);
         }
       } catch (error) {
         console.error('❌ Error cargando perfil:', error);
       } finally {
         setProfileLoading(false);
       }
-    }, [operator, syncedProfile, lastSync]);
+    }, [operator]); // ⭐ BUGFIX: Eliminar syncedProfile y lastSync de dependencias
     
     // Cargar perfil al montar o cuando cambie el operador
     React.useEffect(() => {
