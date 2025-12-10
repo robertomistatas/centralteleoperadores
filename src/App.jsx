@@ -111,6 +111,8 @@ const TeleasistenciaApp = () => {
     activeTab: zustandActiveTab,
     setOperators: setZustandOperators,
     setOperatorAssignments: setZustandOperatorAssignments,
+    updateOperatorAssignments: updateZustandOperatorAssignments,
+    clearOperatorAssignments: clearZustandOperatorAssignments,
     setActiveTab: setZustandActiveTab,
     getAllAssignments: getZustandAllAssignments
   } = useAppStore();
@@ -1224,11 +1226,16 @@ const TeleasistenciaApp = () => {
         return [...filteredPrev, ...newGeneralAssignments];
       });
 
-      // ⭐ BUGFIX: Actualizar Zustand store para evitar duplicación después de refresh
-      const currentZustandAssignments = { ...zustandOperatorAssignments };
-      currentZustandAssignments[operatorId] = processedData;
-      setZustandOperatorAssignments(currentZustandAssignments);
-      console.log('✅ Zustand store actualizado con nuevas asignaciones');
+      // ⭐ CRÍTICO: Usar updateOperatorAssignments que maneja la persistencia correctamente
+      updateZustandOperatorAssignments(operatorId, processedData);
+      console.log('✅ Zustand store actualizado con nuevas asignaciones (persistente)');
+      
+      // Verificar que se guardó correctamente
+      setTimeout(() => {
+        const currentState = useAppStore.getState();
+        const savedAssignments = currentState.operatorAssignments[operatorId];
+        console.log(`✅ Verificación: ${savedAssignments?.length || 0} asignaciones guardadas en store`);
+      }, 100);
 
       setUploadingFor(null);
       showSuccess(`Asignaciones guardadas: ${processedData.length} beneficiarios`);
@@ -1242,7 +1249,7 @@ const TeleasistenciaApp = () => {
     try {
       console.log('🗑️ Iniciando limpieza de asignaciones para operador:', operatorId);
       
-      // 1. Eliminar de Firestore
+      // 1. Eliminar de Firestore (fuente de verdad)
       await assignmentService.deleteOperatorAssignments(user.uid, operatorId);
       console.log('✅ Eliminado de Firestore');
       
@@ -1256,16 +1263,22 @@ const TeleasistenciaApp = () => {
       setAssignments(prev => prev.filter(a => !a.id.toString().startsWith(`${operatorId}-`)));
       console.log('✅ Eliminado de assignments generales');
       
-      // 4. ⭐ BUGFIX: Eliminar del Zustand store
-      const currentZustandAssignments = { ...zustandOperatorAssignments };
-      delete currentZustandAssignments[operatorId];
-      setZustandOperatorAssignments(currentZustandAssignments);
-      console.log('✅ Eliminado del Zustand store');
+      // 4. ⭐ CRÍTICO: Usar la función del store que maneja la persistencia correctamente
+      clearZustandOperatorAssignments(operatorId);
+      console.log('✅ Eliminado del Zustand store (persistente)');
       
       showSuccess('Asignaciones limpiadas correctamente');
       
-      // NO recargamos datos - ya eliminamos de todos los estados necesarios
-      // Firestore ✓, Estado local ✓, Assignments ✓, Zustand ✓
+      // Verificar que realmente se eliminó
+      setTimeout(() => {
+        const currentState = useAppStore.getState();
+        if (currentState.operatorAssignments[operatorId]) {
+          console.error('❌ ERROR: Las asignaciones siguen en el store después de limpiar');
+        } else {
+          console.log('✅ Verificación exitosa: Asignaciones eliminadas permanentemente');
+        }
+      }, 100);
+      
     } catch (error) {
       logger.error('Error clearing assignments:', error);
       showError('Error al limpiar las asignaciones. Por favor, inténtelo nuevamente.');
