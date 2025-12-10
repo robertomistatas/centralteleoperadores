@@ -13,7 +13,8 @@ import {
   TrendingUp,
   RefreshCw,
   Bug,
-  Download
+  Download,
+  X
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../AuthContext';
@@ -84,6 +85,15 @@ const BeneficiariosBase = () => {
       });
     }
   }, [beneficiaries, stats, isLoading]);
+
+  // Debug: Verificar permisos de usuario
+  useEffect(() => {
+    console.log('👤 Usuario actual:', {
+      email: user?.email,
+      isAdmin: isAdminUser(user),
+      user: user
+    });
+  }, [user]);
 
   // CORRECCIÓN: Actualizar estadísticas cuando cambien las asignaciones usando getAllAssignments()
   useEffect(() => {
@@ -303,195 +313,304 @@ const BeneficiariosBase = () => {
   const filteredBeneficiaries = getFilteredBeneficiaries();
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="space-y-6">
       {/* Notificaciones */}
       {notification && (
         <motion.div
-          initial={{ opacity: 0, y: -50 }}
+          initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -50 }}
-          className={`fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg max-w-md ${
+          exit={{ opacity: 0, y: -20 }}
+          className={`fixed top-20 right-4 z-50 px-6 py-4 rounded-lg shadow-xl max-w-md ${
             notification.type === 'success' ? 'bg-green-500 text-white' :
             notification.type === 'error' ? 'bg-red-500 text-white' :
             notification.type === 'warning' ? 'bg-yellow-500 text-white' :
             'bg-blue-500 text-white'
           }`}
         >
-          {notification.message}
+          <div className="flex items-center space-x-2">
+            {notification.type === 'success' && <CheckCircle className="h-5 w-5" />}
+            {notification.type === 'error' && <AlertTriangle className="h-5 w-5" />}
+            {notification.type === 'warning' && <AlertTriangle className="h-5 w-5" />}
+            <span className="font-medium">{notification.message}</span>
+          </div>
         </motion.div>
       )}
 
-      {/* Header */}
-      <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-4">
-            <div className="flex items-center space-x-3">
-              <Database className="h-8 w-8 text-blue-600 dark:text-blue-400" />
+      {/* Header Card */}
+      <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center space-x-3">
+            <div className="bg-blue-100 p-3 rounded-lg">
+              <Database className="h-8 w-8 text-blue-600" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">Beneficiarios Base</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Gestión centralizada de beneficiarios y validación con asignaciones
+              </p>
+            </div>
+          </div>
+
+          {/* Botones de acción principales */}
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={handleSyncWithAssignments}
+              className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+              title="Sincronizar con módulo de Asignaciones"
+            >
+              <RefreshCw className="h-4 w-4" />
+              <span className="hidden sm:inline">Sincronizar con Asignaciones</span>
+            </button>
+
+            <button
+              onClick={handleDebugModule}
+              className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors shadow-sm"
+              title="Ejecutar diagnóstico completo"
+            >
+              <Bug className="h-4 w-4" />
+              <span className="hidden sm:inline">Diagnóstico</span>
+            </button>
+
+            <button
+              onClick={handleDebugSpecific}
+              className="flex items-center space-x-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors shadow-sm"
+              title="Buscar beneficiario específico"
+            >
+              <Search className="h-4 w-4" />
+              <span className="hidden sm:inline">Debug Específico</span>
+            </button>
+
+            {isAdminUser(user) && (
+              <button
+                onClick={() => setShowUploadModal(true)}
+                disabled={isUploading}
+                className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Cargar Excel con beneficiarios actualizados"
+              >
+                <Upload className="h-4 w-4" />
+                <span>{isUploading ? 'Cargando...' : 'Cargar Excel'}</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-lg border border-blue-200">
+            <div className="flex items-center justify-between">
               <div>
-                <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-                  Beneficiarios Base
-                </h1>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Gestión centralizada de beneficiarios y validación con asignaciones
+                <p className="text-xs font-medium text-blue-600 uppercase tracking-wide">Total Beneficiarios</p>
+                <p className="text-2xl font-bold text-blue-900 mt-1">{stats.total}</p>
+              </div>
+              <Users className="h-10 w-10 text-blue-600 opacity-50" />
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-green-50 to-green-100 p-4 rounded-lg border border-green-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-green-600 uppercase tracking-wide">Con Asignación</p>
+                <p className="text-2xl font-bold text-green-900 mt-1">{stats.total - stats.unassigned}</p>
+              </div>
+              <UserCheck className="h-10 w-10 text-green-600 opacity-50" />
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 p-4 rounded-lg border border-yellow-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-yellow-600 uppercase tracking-wide">Sin Asignar</p>
+                <p className="text-2xl font-bold text-yellow-900 mt-1">{stats.unassigned}</p>
+              </div>
+              <UserX className="h-10 w-10 text-yellow-600 opacity-50" />
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-lg border border-purple-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-purple-600 uppercase tracking-wide">Cobertura</p>
+                <p className="text-2xl font-bold text-purple-900 mt-1">
+                  {stats.total > 0 ? Math.round(((stats.total - stats.unassigned) / stats.total) * 100) : 0}%
                 </p>
+              </div>
+              <TrendingUp className="h-10 w-10 text-purple-600 opacity-50" />
+            </div>
+          </div>
+        </div>
+
+        {/* Navegación por tabs */}
+        <div className="mt-6 border-b border-gray-200">
+          <nav className="-mb-px flex space-x-8">
+            {[
+              { id: 'dashboard', name: 'Dashboard', icon: Database },
+              { id: 'list', name: 'Lista completa', icon: Users },
+              { id: 'validation', name: 'Validación', icon: CheckCircle }
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center space-x-2 py-3 px-1 border-b-2 font-medium text-sm transition-colors ${
+                  activeTab === tab.id
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                <tab.icon className="h-4 w-4" />
+                <span>{tab.name}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+      </div>
+
+      {/* Contenido por tabs */}
+      {activeTab === 'dashboard' && (
+        <motion.div
+          key="dashboard"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-6"
+        >
+          {/* Componente de beneficiarios sin asignar */}
+          <UnassignedBeneficiaries
+            beneficiaries={beneficiaries}
+            assignments={getAllAssignments()}
+            onAssignOperator={handleAssignOperator}
+          />
+
+          {/* Gráficos y estadísticas adicionales */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center space-x-2">
+                <FileSpreadsheet className="h-5 w-5 text-blue-600" />
+                <span>Distribución por Estado</span>
+              </h3>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg border border-green-200">
+                  <div className="flex items-center space-x-2">
+                    <UserCheck className="h-5 w-5 text-green-600" />
+                    <span className="text-sm font-medium text-gray-700">Con Asignación</span>
+                  </div>
+                  <span className="text-lg font-bold text-green-600">
+                    {stats.total - stats.unassigned}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                  <div className="flex items-center space-x-2">
+                    <UserX className="h-5 w-5 text-yellow-600" />
+                    <span className="text-sm font-medium text-gray-700">Sin Asignar</span>
+                  </div>
+                  <span className="text-lg font-bold text-yellow-600">
+                    {stats.unassigned}
+                  </span>
+                </div>
               </div>
             </div>
 
-            {/* Botones de acción */}
-            <div className="flex items-center space-x-3">
-              {/* CORRECCIÓN: Botón de sincronización manual */}
-              <button
-                onClick={handleSyncWithAssignments}
-                className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                <RefreshCw className="h-4 w-4" />
-                <span>Sincronizar con Asignaciones</span>
-              </button>
-
-              {/* Botón de debugging */}
-              <button
-                onClick={handleDebugModule}
-                className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-              >
-                <Bug className="h-4 w-4" />
-                <span>Diagnóstico</span>
-              </button>
-
-              {/* Botón de debugging específico */}
-              <button
-                onClick={handleDebugSpecific}
-                className="flex items-center space-x-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
-              >
-                <Search className="h-4 w-4" />
-                <span>Debug Específico</span>
-              </button>
-
-              {isAdminUser(user?.email) && (
-                <button
-                  onClick={() => setShowUploadModal(true)}
-                  className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                >
-                  <Upload className="h-4 w-4" />
-                  <span>Cargar Excel</span>
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Navegación por tabs */}
-          <div className="border-b border-gray-200 dark:border-gray-700">
-            <nav className="-mb-px flex space-x-8">
-              {[
-                { id: 'dashboard', name: 'Dashboard', icon: Database },
-                { id: 'list', name: 'Lista completa', icon: Users },
-                { id: 'validation', name: 'Validación', icon: CheckCircle }
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center space-x-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
-                    activeTab === tab.id
-                      ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-                  }`}
-                >
-                  <tab.icon className="h-4 w-4" />
-                  <span>{tab.name}</span>
-                </button>
-              ))}
-            </nav>
-          </div>
-        </div>
-      </header>
-
-      {/* Contenido principal */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {activeTab === 'dashboard' && (
-          <motion.div
-            key="dashboard"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-          >
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-              Dashboard de Beneficiarios
-            </h3>
-            
-            {/* CORRECCIÓN: Usar getAllAssignments() para el componente UnassignedBeneficiaries */}
-            <UnassignedBeneficiaries
-              beneficiaries={beneficiaries}
-              assignments={getAllAssignments()}
-              onAssignOperator={handleAssignOperator}
-            />
-            
-            {/* Gráficos y estadísticas adicionales */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
-                <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3">
-                  Distribución por Estado
-                </h4>
-                <div className="space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-sm text-gray-600 dark:text-gray-400">Con Asignación</span>
-                    <span className="text-sm font-medium text-green-600 dark:text-green-400">
-                      {stats.total - stats.unassigned}
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center space-x-2">
+                <TrendingUp className="h-5 w-5 text-purple-600" />
+                <span>Progreso de Cobertura</span>
+              </h3>
+              <div className="space-y-3">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-700">Cobertura Actual</span>
+                    <span className="text-sm font-bold text-purple-600">
+                      {stats.total > 0 ? Math.round(((stats.total - stats.unassigned) / stats.total) * 100) : 0}%
                     </span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm text-gray-600 dark:text-gray-400">Sin Asignar</span>
-                    <span className="text-sm font-medium text-yellow-600 dark:text-yellow-400">
-                      {stats.unassigned}
-                    </span>
+                  <div className="w-full bg-gray-200 rounded-full h-3">
+                    <div
+                      className="bg-gradient-to-r from-purple-500 to-purple-600 h-3 rounded-full transition-all duration-500"
+                      style={{
+                        width: `${stats.total > 0 ? ((stats.total - stats.unassigned) / stats.total) * 100 : 0}%`
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3 mt-4">
+                  <div className="text-center p-3 bg-blue-50 rounded-lg">
+                    <p className="text-xs text-blue-600 font-medium">Total Base</p>
+                    <p className="text-xl font-bold text-blue-900">{stats.total}</p>
+                  </div>
+                  <div className="text-center p-3 bg-green-50 rounded-lg">
+                    <p className="text-xs text-green-600 font-medium">Asignados</p>
+                    <p className="text-xl font-bold text-green-900">{stats.total - stats.unassigned}</p>
                   </div>
                 </div>
               </div>
             </div>
-          </motion.div>
-        )}
+          </div>
+        </motion.div>
+      )}
 
-        {activeTab === 'list' && (
-          <motion.div
-            key="list"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-          >
-            <BeneficiaryList
-              beneficiaries={filteredBeneficiaries}
-              searchTerm={searchTerm}
-              onSearchChange={setSearchTerm}
-              onEdit={handleEditBeneficiary}
-              onDelete={handleDeleteBeneficiary}
-              onAssignOperator={handleAssignOperator}
-              isLoading={isLoading}
-            />
-          </motion.div>
-        )}
+      {activeTab === 'list' && (
+        <motion.div
+          key="list"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <BeneficiaryList
+            beneficiaries={filteredBeneficiaries}
+            searchTerm={searchTerm}
+            onSearchChange={setSearchTerm}
+            onEdit={handleEditBeneficiary}
+            onDelete={handleDeleteBeneficiary}
+            onAssignOperator={handleAssignOperator}
+            isLoading={isLoading}
+          />
+        </motion.div>
+      )}
 
-        {activeTab === 'validation' && (
-          <motion.div
-            key="validation"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-          >
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+      {activeTab === 'validation' && (
+        <motion.div
+          key="validation"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <div className="flex items-center space-x-3 mb-4">
+              <CheckCircle className="h-6 w-6 text-green-600" />
+              <h3 className="text-lg font-semibold text-gray-900">
                 Validación y Consistencia
               </h3>
-              <p className="text-gray-600 dark:text-gray-400">
-                Herramientas de validación y auditoría en desarrollo...
+            </div>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <p className="text-sm text-blue-900">
+                <strong>Funcionalidad en desarrollo:</strong> Esta sección incluirá herramientas de validación, 
+                auditoría y detección de inconsistencias entre la base de beneficiarios y las asignaciones.
               </p>
             </div>
-          </motion.div>
-        )}
-      </main>
+          </div>
+        </motion.div>
+      )}
 
       {/* Modal de upload */}
       {showUploadModal && (
-        <ExcelUpload
-          onUploadComplete={handleUploadComplete}
-          onClose={() => setShowUploadModal(false)}
-          isUploading={isUploading}
-          uploadProgress={uploadProgress}
-        />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-auto">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-bold text-gray-900">Cargar Base de Beneficiarios</h3>
+                <button
+                  onClick={() => setShowUploadModal(false)}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X className="h-5 w-5 text-gray-500" />
+                </button>
+              </div>
+              
+              <ExcelUpload
+                onUploadComplete={handleUploadComplete}
+                onUploadError={(error) => showNotification(error, 'error')}
+                isUploading={isUploading}
+                uploadProgress={uploadProgress}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
