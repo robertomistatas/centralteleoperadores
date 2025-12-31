@@ -1,78 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { UserX, Search, AlertTriangle, Users, Phone, ChevronDown, ChevronUp, FileSpreadsheet } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { findBeneficiaryMatch } from '../../utils/stringNormalization';
 import * as XLSX from 'xlsx';
 
 /**
  * Componente para mostrar beneficiarios sin teleoperadora asignada
  */
 const UnassignedBeneficiaries = ({ 
-  beneficiaries = [], 
-  assignments = [], 
+  unassignedBeneficiaries = [],
   onAssignOperator,
   className = ""
 }) => {
-  const [unassignedBeneficiaries, setUnassignedBeneficiaries] = useState([]);
   const [isExpanded, setIsExpanded] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
-
-  // Calcular beneficiarios no asignados
-  useEffect(() => {
-    const calculateUnassigned = () => {
-      setIsLoading(true);
-      
-      console.log('🔍 UnassignedBeneficiaries - Calculando sin asignar:', {
-        beneficiaries: beneficiaries.length,
-        assignments: assignments.length
-      });
-      
-      if (assignments.length === 0) {
-        console.log('⚠️ No hay asignaciones, todos los beneficiarios aparecen como sin asignar');
-        setUnassignedBeneficiaries(beneficiaries);
-        setIsLoading(false);
-        return;
-      }
-      
-      // CORRECCIÓN: Mapear correctamente los campos de assignments según el formato del store
-      const assignedBeneficiaries = assignments.map(assignment => ({
-        // El store devuelve: { operator, operatorName, beneficiary, phone, commune }
-        nombre: assignment.beneficiary || assignment.nombre || assignment.beneficiario,
-        telefono: assignment.phone || assignment.primaryPhone || assignment.telefono || assignment.fono,
-        teleoperadora: assignment.operator || assignment.operatorName || assignment.teleoperadora || assignment.operador
-      })).filter(item => item.nombre && item.teleoperadora); // Filtrar elementos válidos con operadora
-      
-      console.log('📋 Asignaciones procesadas:', {
-        total: assignedBeneficiaries.length,
-        muestra: assignedBeneficiaries.slice(0, 3).map(a => ({
-          nombre: a.nombre,
-          teleoperadora: a.teleoperadora
-        }))
-      });
-      
-      // Encontrar beneficiarios de la base que no están en assignments
-      const unassigned = beneficiaries.filter(beneficiary => {
-        const match = findBeneficiaryMatch(beneficiary, assignedBeneficiaries);
-        return !match; // Si no hay coincidencia, está sin asignar
-      });
-      
-      console.log('📊 Resultado del cálculo:', {
-        totalBeneficiarios: beneficiaries.length,
-        asignados: assignedBeneficiaries.length,
-        sinAsignar: unassigned.length
-      });
-      
-      setUnassignedBeneficiaries(unassigned);
-      setIsLoading(false);
-    };
-
-    if (beneficiaries.length > 0) {
-      calculateUnassigned();
-    } else {
-      setIsLoading(false);
-    }
-  }, [beneficiaries, assignments]);
 
   // Filtrar por búsqueda
   const filteredUnassigned = unassignedBeneficiaries.filter(beneficiary => {
@@ -178,19 +118,6 @@ const UnassignedBeneficiaries = ({
     // Guardar el archivo
     XLSX.writeFile(wb, fileName);
   };
-
-  if (isLoading) {
-    return (
-      <div className={`bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 ${className}`}>
-        <div className="p-6 text-center">
-          <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-            Analizando asignaciones...
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <motion.div 

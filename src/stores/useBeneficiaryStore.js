@@ -219,7 +219,8 @@ const useBeneficiaryStore = create(
         return await get().loadBeneficiaries(userId);
       },
 
-      uploadBeneficiaries: async (beneficiariesData, userId) => {
+      uploadBeneficiaries: async (beneficiariesData, userId, options = {}) => {
+        const { replaceAll = false, onProgress } = options;
         set({ isUploading: true, uploadProgress: 0 });
         
         try {
@@ -229,13 +230,19 @@ const useBeneficiaryStore = create(
             (progress) => {
               const percentage = Math.round((progress.processed / progress.total) * 100);
               set({ uploadProgress: percentage });
-            }
+              if (onProgress) {
+                onProgress(progress);
+              }
+            },
+            replaceAll
           );
           
           // Actualizar estado local
           if (result.success && result.data) {
             const currentBeneficiaries = get().beneficiaries;
-            const newBeneficiaries = [...currentBeneficiaries, ...result.data];
+            const newBeneficiaries = replaceAll 
+              ? result.data 
+              : [...currentBeneficiaries, ...result.data];
             get().setBeneficiaries(newBeneficiaries);
             set({ shouldReload: false }); // No recargar después de un upload exitoso
           }
@@ -417,7 +424,9 @@ const useBeneficiaryStore = create(
   )
 );
 
-// Hacer store disponible globalmente para debugging
-window.zustandStore = useBeneficiaryStore;
+// Hacer store disponible globalmente para debugging (solo en desarrollo)
+if (typeof window !== 'undefined' && import.meta?.env?.DEV) {
+  window.zustandStore = useBeneficiaryStore;
+}
 
 export default useBeneficiaryStore;

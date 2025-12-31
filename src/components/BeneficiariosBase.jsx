@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Users, 
   Upload, 
@@ -36,6 +36,12 @@ const BeneficiariosBase = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [notification, setNotification] = useState(null);
+  const [unassignedBeneficiaries, setUnassignedBeneficiaries] = useState([]);
+
+  const showDebugActions = useMemo(
+    () => import.meta.env.DEV || isAdminUser(user),
+    [user]
+  );
   
   // Store de beneficiarios
   const {
@@ -46,7 +52,6 @@ const BeneficiariosBase = () => {
     uploadProgress,
     searchTerm,
     setSearchTerm,
-    setBeneficiaries,
     loadBeneficiaries,
     forceReload,
     uploadBeneficiaries,
@@ -76,8 +81,9 @@ const BeneficiariosBase = () => {
     initializeStore();
   }, [user]);
 
-  // Mostrar estadísticas iniciales
+  // Mostrar estadísticas iniciales (solo en dev)
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
     if (beneficiaries.length > 0 && !isLoading) {
       console.log('📊 Beneficiarios Base cargados:', {
         total: beneficiaries.length,
@@ -86,25 +92,28 @@ const BeneficiariosBase = () => {
     }
   }, [beneficiaries, stats, isLoading]);
 
-  // Debug: Verificar permisos de usuario
+  // Debug: Verificar permisos de usuario (solo en dev)
   useEffect(() => {
-    console.log('👤 Usuario actual:', {
-      email: user?.email,
-      isAdmin: isAdminUser(user),
-      user: user
-    });
+    if (import.meta.env.DEV) {
+      console.log('👤 Usuario actual:', {
+        email: user?.email,
+        isAdmin: isAdminUser(user),
+        user: user
+      });
+    }
   }, [user]);
 
-  // CORRECCIÓN: Actualizar estadísticas cuando cambien las asignaciones usando getAllAssignments()
+  // Fuente única: calcular sin asignar solo a través del store y cachear en estado local
   useEffect(() => {
-    if (beneficiaries.length > 0) {
-      const allAssignments = getAllAssignments();
-      console.log('🔄 Actualizando estadísticas con asignaciones:', allAssignments.length);
-      
-      // Buscar beneficiarios no asignados usando el formato correcto
-      const unassigned = findUnassignedBeneficiaries(allAssignments);
-      console.log('👥 Beneficiarios sin asignar encontrados:', unassigned.length);
+    if (beneficiaries.length === 0) {
+      setUnassignedBeneficiaries([]);
+      return;
     }
+
+    const allAssignments = getAllAssignments();
+    const unassigned = findUnassignedBeneficiaries(allAssignments);
+    setUnassignedBeneficiaries(unassigned);
+    console.log('🔄 Unassigned actualizados:', unassigned.length);
   }, [operatorAssignments, beneficiaries, findUnassignedBeneficiaries, getAllAssignments]);
 
   // Mostrar notificaciones
@@ -126,8 +135,9 @@ const BeneficiariosBase = () => {
         return;
       }
       
-      // Forzar recálculo de beneficiarios sin asignar
+      // Forzar recálculo de beneficiarios sin asignar usando el store
       const unassigned = findUnassignedBeneficiaries(allAssignments);
+      setUnassignedBeneficiaries(unassigned);
       
       showNotification(
         `✅ Sincronización completada. ${allAssignments.length} asignaciones procesadas, ${unassigned.length} beneficiarios sin asignar`,
@@ -142,6 +152,7 @@ const BeneficiariosBase = () => {
 
   // Función de debugging para casos específicos
   const handleDebugSpecific = () => {
+    if (!showDebugActions) return;
     const beneficiaryName = prompt('Ingresa el nombre del beneficiario a debuggear (ej: "Mariana Apolonia Gonzalez Gonzalez"):');
     if (!beneficiaryName) return;
     
@@ -175,10 +186,12 @@ const BeneficiariosBase = () => {
 
   // Nueva función de debugging completo del módulo
   const handleDebugModule = () => {
+    if (!showDebugActions) return;
     console.group('🔍 DIAGNÓSTICO COMPLETO - MÓDULO BENEFICIARIOS BASE');
     
     const allAssignments = getAllAssignments();
     const unassigned = findUnassignedBeneficiaries(allAssignments);
+    setUnassignedBeneficiaries(unassigned);
     
     console.log('📊 RESUMEN GENERAL:');
     console.log('- Total beneficiarios:', beneficiaries.length);
@@ -239,40 +252,28 @@ const BeneficiariosBase = () => {
       console.log('📤 UPLOAD EXCEL - Iniciando...');
       console.log(`📊 Registros en Excel: ${data.length}`);
       
-      // Importar el servicio directamente para usar la nueva funcionalidad
-      const { beneficiaryService } = await import('../services/beneficiaryService');
-      
-      // NUEVO: Usar uploadBeneficiaries con reemplazo automático
-      const result = await beneficiaryService.uploadBeneficiaries(
-        data, 
-        user.uid, 
-        (progress) => {
-          // Callback de progreso
+      const result = await uploadBeneficiaries(data, user.uid, {
+        replaceAll: true,
+        onProgress: (progress) => {
           console.log('📊 Progreso:', progress);
           if (metadata?.onProgress) {
             metadata.onProgress(progress.processed || 0);
           }
-        },
-        true // replaceAll = true (eliminar datos existentes)
-      );
-      
-      if (result.success) {
-        // Actualizar el store local inmediatamente
-        setBeneficiaries(result.data);
-        
-        // Mostrar mensaje informativo sobre el reemplazo
-        const message = result.replacedPrevious 
-          ? `✅ Base de datos REEMPLAZADA: ${result.successful} beneficiarios cargados` 
-          : `✅ Se cargaron ${result.successful} beneficiarios correctamente`;
-        
-        const errorPart = result.errors > 0 ? ` (${result.errors} errores encontrados)` : '';
-        
-        showNotification(message + errorPart, 'success');
-        console.log('✅ UPLOAD COMPLETADO:', result);
-        setShowUploadModal(false);
-      } else {
+        }
+      });
+
+      if (!result.success) {
         throw new Error(result.message || 'Error durante la carga');
       }
+
+      const message = result.replacedPrevious 
+        ? `✅ Base de datos REEMPLAZADA: ${result.successful} beneficiarios cargados` 
+        : `✅ Se cargaron ${result.successful} beneficiarios correctamente`;
+      const errorPart = result.errors > 0 ? ` (${result.errors} errores encontrados)` : '';
+
+      showNotification(message + errorPart, 'success');
+      console.log('✅ UPLOAD COMPLETADO:', result);
+      setShowUploadModal(false);
       
     } catch (error) {
       console.error('❌ Error en upload:', error);
@@ -362,23 +363,27 @@ const BeneficiariosBase = () => {
               <span className="hidden sm:inline">Sincronizar con Asignaciones</span>
             </button>
 
-            <button
-              onClick={handleDebugModule}
-              className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors shadow-sm"
-              title="Ejecutar diagnóstico completo"
-            >
-              <Bug className="h-4 w-4" />
-              <span className="hidden sm:inline">Diagnóstico</span>
-            </button>
+            {showDebugActions && (
+              <>
+                <button
+                  onClick={handleDebugModule}
+                  className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors shadow-sm"
+                  title="Ejecutar diagnóstico completo"
+                >
+                  <Bug className="h-4 w-4" />
+                  <span className="hidden sm:inline">Diagnóstico</span>
+                </button>
 
-            <button
-              onClick={handleDebugSpecific}
-              className="flex items-center space-x-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors shadow-sm"
-              title="Buscar beneficiario específico"
-            >
-              <Search className="h-4 w-4" />
-              <span className="hidden sm:inline">Debug Específico</span>
-            </button>
+                <button
+                  onClick={handleDebugSpecific}
+                  className="flex items-center space-x-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors shadow-sm"
+                  title="Buscar beneficiario específico"
+                >
+                  <Search className="h-4 w-4" />
+                  <span className="hidden sm:inline">Debug Específico</span>
+                </button>
+              </>
+            )}
 
             {isAdminUser(user) && (
               <button
@@ -474,8 +479,7 @@ const BeneficiariosBase = () => {
         >
           {/* Componente de beneficiarios sin asignar */}
           <UnassignedBeneficiaries
-            beneficiaries={beneficiaries}
-            assignments={getAllAssignments()}
+            unassignedBeneficiaries={unassignedBeneficiaries}
             onAssignOperator={handleAssignOperator}
           />
 
