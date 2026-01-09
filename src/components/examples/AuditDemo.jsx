@@ -576,14 +576,6 @@ function AuditDemo() {
       doc.text('Teleoperadoras Activas:', leftColumn, yPos);
       doc.setFont('helvetica', 'normal');
       doc.text(operatorCallMetrics.length.toString(), leftColumn + 55, yPos);
-      
-      doc.setFont('helvetica', 'bold');
-      doc.text('Productividad:', rightColumn, yPos);
-      doc.setFont('helvetica', 'normal');
-      const productivity = totalMetrics.totalEffectiveMinutes > 0 
-        ? (totalMetrics.totalCalls / (totalMetrics.totalEffectiveMinutes / 60)).toFixed(1) 
-        : '0';
-      doc.text(`${productivity} llamadas/hora`, rightColumn + 35, yPos);
       yPos += 15;
       
       // ═══════════════════════════════════════════════════════════
