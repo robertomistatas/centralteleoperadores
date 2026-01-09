@@ -490,18 +490,20 @@ function AuditDemo() {
       const leftColumn = margin;
       const rightColumn = pageWidth / 2 + 5;
       const lineHeight = 7;
+      const leftValueX = leftColumn + 72;
+      const rightValueX = rightColumn + 72;
       
       // Columna Izquierda
       doc.setFont('helvetica', 'bold');
       doc.text('Beneficiarios Asignados:', leftColumn, yPos);
       doc.setFont('helvetica', 'normal');
-      doc.text(totalMetrics.totalAssignedBeneficiaries.toLocaleString(), leftColumn + 55, yPos);
+      doc.text(totalMetrics.totalAssignedBeneficiaries.toLocaleString(), leftValueX, yPos);
       
       // Columna Derecha
       doc.setFont('helvetica', 'bold');
       doc.text('Total de Llamadas:', rightColumn, yPos);
       doc.setFont('helvetica', 'normal');
-      doc.text(totalMetrics.totalCalls.toLocaleString(), rightColumn + 45, yPos);
+      doc.text(totalMetrics.totalCalls.toLocaleString(), rightValueX, yPos);
       yPos += lineHeight;
       
       // Fila 2
@@ -509,14 +511,14 @@ function AuditDemo() {
       doc.text('Beneficiarios Contactados:', leftColumn, yPos);
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(...colors.success);
-      doc.text(totalMetrics.totalContactedBeneficiaries.toLocaleString(), leftColumn + 55, yPos);
+      doc.text(totalMetrics.totalContactedBeneficiaries.toLocaleString(), leftValueX, yPos);
       doc.setTextColor(...colors.secondary);
       
       doc.setFont('helvetica', 'bold');
       doc.text('Beneficiarios Sin Contactar:', rightColumn, yPos);
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(...colors.danger);
-      doc.text(totalMetrics.totalUncontactedBeneficiaries.toLocaleString(), rightColumn + 60, yPos);
+      doc.text(totalMetrics.totalUncontactedBeneficiaries.toLocaleString(), rightValueX, yPos);
       doc.setTextColor(...colors.secondary);
       yPos += lineHeight;
       
@@ -524,12 +526,12 @@ function AuditDemo() {
       doc.setFont('helvetica', 'bold');
       doc.text('Minutos Totales Efectivos:', leftColumn, yPos);
       doc.setFont('helvetica', 'normal');
-      doc.text(`${totalMetrics.totalEffectiveMinutes.toLocaleString()} min (${(totalMetrics.totalEffectiveMinutes / 60).toFixed(1)} hrs)`, leftColumn + 55, yPos);
+      doc.text(`${totalMetrics.totalEffectiveMinutes.toLocaleString()} min (${(totalMetrics.totalEffectiveMinutes / 60).toFixed(1)} hrs)`, leftValueX, yPos);
       
       doc.setFont('helvetica', 'bold');
       doc.text('Promedio/Llamada Exitosa:', rightColumn, yPos);
       doc.setFont('helvetica', 'normal');
-      doc.text(`${averageMinutesPerSuccessfulCall} min`, rightColumn + 60, yPos);
+      doc.text(`${averageMinutesPerSuccessfulCall} min`, rightValueX, yPos);
       yPos += 12;
       
       // ═══════════════════════════════════════════════════════════
@@ -595,22 +597,21 @@ function AuditDemo() {
       // Preparar datos de la tabla con el nuevo orden solicitado por gerencia
       console.log('📊 [AUDIT] Preparando datos para tabla...');
       const tableData = operatorCallMetrics.map((operator) => {
-        // Calcular % Completado: (contactados / asignados) * 100
-        const completionRate = operator.assignedBeneficiaries > 0 
-          ? Math.round((operator.contactedBeneficiaries / operator.assignedBeneficiaries) * 100) 
-          : 0;
+        const remainingToContact = Math.max(
+          0,
+          (operator.assignedBeneficiaries || 0) - (operator.contactedBeneficiaries || 0)
+        );
         
         return [
           operator.operatorName,                              // 1. Teleoperadora
           operator.assignedBeneficiaries.toString(),          // 2. Asignados
           operator.contactedBeneficiaries.toString(),         // 3. Contactados
-          `${completionRate}%`,                               // 4. % Completado
+          remainingToContact.toString(),                      // 4. Faltan por contactar
           operator.totalCalls.toString(),                     // 5. Total Llamadas
           operator.successfulCalls.toString(),                // 6. Exitosas
-          `${operator.successRate}%`,                         // 7. Tasa Éxito
-          `${operator.totalEffectiveMinutes} min`,            // 8. Min. Efectivos
-          `${operator.averageMinutesPerCall} min`,            // 9. Minutos Llamada
-          operator.averageCallsPerBeneficiary.toString()      // 10. Llamada s/ Benef.
+          `${operator.totalEffectiveMinutes} min`,            // 7. Min. Efectivos
+          `${operator.averageMinutesPerCall} min`,            // 8. Minutos Llamada
+          operator.averageCallsPerBeneficiary.toString()      // 9. Llamadas/Benef.
         ];
       });
       
@@ -623,13 +624,12 @@ function AuditDemo() {
           'Teleoperadora',      // 1
           'Asignados',          // 2
           'Contactados',        // 3
-          '% Completado',       // 4
+          'Faltan\npor contactar', // 4
           'Total\nLlamadas',    // 5
           'Exitosas',           // 6
-          'Tasa\nÉxito',        // 7
-          'Min.\nEfectivos',    // 8
-          'Min/\nLlamada',      // 9
-          'Llamadas/\nBenef.'   // 10
+          'Min.\nEfectivos',    // 7
+          'Min/\nLlamada',      // 8
+          'Llamadas/\nBenef.'   // 9
         ]],
         body: tableData,
         theme: 'grid',
@@ -658,17 +658,16 @@ function AuditDemo() {
           0: { halign: 'left', cellWidth: 35, fontStyle: 'bold' },  // Teleoperadora
           1: { cellWidth: 18 },  // Asignados
           2: { cellWidth: 18 },  // Contactados
-          3: { cellWidth: 18 },  // % Completado
+          3: { cellWidth: 20 },  // Faltan por contactar
           4: { cellWidth: 16 },  // Total Llamadas
           5: { cellWidth: 15 },  // Exitosas
-          6: { cellWidth: 15 },  // Tasa Éxito
-          7: { cellWidth: 16 },  // Min. Efectivos
-          8: { cellWidth: 15 },  // Min/Llamada
-          9: { cellWidth: 18 }   // Llamadas/Benef.
+          6: { cellWidth: 18 },  // Min. Efectivos
+          7: { cellWidth: 15 },  // Min/Llamada
+          8: { cellWidth: 18 }   // Llamadas/Benef.
         },
-        // Hook para personalizar el color de los headers en verde (Asignados, Contactados, % Completado)
+        // Hook para personalizar el color de los headers en verde (Asignados, Contactados, Faltan por contactar)
         didDrawCell: (data) => {
-          // Pintar en verde las columnas: Asignados (1), Contactados (2) y % Completado (3)
+          // Pintar en verde las columnas: Asignados (1), Contactados (2) y Faltan por contactar (3)
           if (data.section === 'head' && (data.column.index === 1 || data.column.index === 2 || data.column.index === 3)) {
             // Fondo verde
             doc.setFillColor(34, 197, 94); // Verde (#22c55e)
@@ -685,12 +684,12 @@ function AuditDemo() {
             doc.setFont('helvetica', 'bold');
             
             // Determinar el texto según la columna
-            let headerText = '';
-            if (data.column.index === 1) headerText = 'Asignados';
-            else if (data.column.index === 2) headerText = 'Contactados';
-            else if (data.column.index === 3) headerText = '% Completado';
-            
-            doc.text(headerText, data.cell.x + data.cell.width / 2, data.cell.y + data.cell.height / 2, {
+            let headerTextLines = [''];
+            if (data.column.index === 1) headerTextLines = ['Asignados'];
+            else if (data.column.index === 2) headerTextLines = ['Contactados'];
+            else if (data.column.index === 3) headerTextLines = ['Faltan', 'por contactar'];
+
+            doc.text(headerTextLines, data.cell.x + data.cell.width / 2, data.cell.y + data.cell.height / 2 - 2, {
               align: 'center',
               baseline: 'middle'
             });
@@ -757,16 +756,15 @@ function AuditDemo() {
   // Función para exportar datos a Excel (simulado)
   const exportToExcel = () => {
     const csvContent = [
-      ['Teleoperadora', 'Total Llamadas', 'Asignados', 'Contactados', 'Sin Contactar', 'Exitosas', 'Fallidas', 'Tasa Éxito', 'Min. Efectivos', 'Min/Llamada', 'Llamadas/Benef.'],
+      ['Teleoperadora', 'Total Llamadas', 'Asignados', 'Contactados', 'Faltan por contactar', 'Exitosas', 'Fallidas', 'Min. Efectivos', 'Min/Llamada', 'Llamadas/Benef.'],
       ...operatorCallMetrics.map(op => [
         op.operatorName,
         op.totalCalls,
         op.assignedBeneficiaries,
         op.contactedBeneficiaries,
-        op.uncontactedBeneficiaries,
+        Math.max(0, (op.assignedBeneficiaries || 0) - (op.contactedBeneficiaries || 0)),
         op.successfulCalls,
         op.failedCalls,
-        `${op.successRate}%`,
         op.totalEffectiveMinutes,
         op.averageMinutesPerCall,
         op.averageCallsPerBeneficiary
