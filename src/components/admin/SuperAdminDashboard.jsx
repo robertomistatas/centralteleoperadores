@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { shallow } from 'zustand/shallow';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Users, 
@@ -11,6 +12,7 @@ import {
   Upload,
   AlertTriangle,
   CheckCircle,
+  XCircle,
   Eye,
   EyeOff,
   Edit,
@@ -20,17 +22,26 @@ import {
   Database,
   Activity,
   Zap,
+  ClipboardList,
   BarChart3,
-  RefreshCw,
   Globe,
   Lock,
-  Palette
+  Palette,
+  FileSpreadsheet,
+  RefreshCw
 } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import useUserManagementStore from '../../stores/useUserManagementStore';
 import { userManagementService } from '../../services/userManagementService';
 import { userSyncService } from '../../services/userSyncService'; // ✅ Servicio de sincronización global
-import { useUIStore, useCallStore } from '../../stores';
+import { useUIStore, useCallStore, useAppStore } from '../../stores';
+import auditService from '../../audit/auditService';
+import { buildCanonicalAssignmentsSnapshot } from '../../services/assignmentsSnapshot';
+import { computeGlobalSnapshot } from '../../services/metricsService';
+import { operatorService, assignmentService } from '../../firestoreService';
+import { teleoperatorService } from '../../services/teleoperatorService';
+import { runAssignmentOperatorMigration } from '../../services/migrations/assignmentOperatorMigration';
+import { getCanonicalAssignmentsMetrics } from '../../utils/assignmentMetrics';
 import logger from '../../utils/logger';
 import CreateUserModal from './CreateUserModal';
 import EditUserModal from './EditUserModal';
@@ -41,26 +52,33 @@ import EditUserModal from './EditUserModal';
  */
 const SuperAdminDashboard = () => {
   const { user } = useAuth();
-  const {
-    users,
-    roles,
-    isLoading,
-    stats,
-    searchTerm,
-    filterRole,
-    selectedUser,
-    setSearchTerm,
-    setFilterRole,
-    setSelectedUser,
-    loadUsers,
-    createUser,
-    updateUser,
-    deleteUser,
-    toggleUserStatus,
-    getFilteredUsers,
-    isSuperAdmin,
-    exportUsers
-  } = useUserManagementStore();
+  const users = useUserManagementStore(state => state.users);
+  const roles = useUserManagementStore(state => state.roles);
+  const isLoading = useUserManagementStore(state => state.isLoading);
+  const isLoaded = useUserManagementStore(state => state.isLoaded);
+  const stats = useUserManagementStore(state => state.stats, shallow);
+  const searchTerm = useUserManagementStore(state => state.searchTerm);
+  const filterRole = useUserManagementStore(state => state.filterRole);
+  const selectedUser = useUserManagementStore(state => state.selectedUser);
+  const setSearchTerm = useUserManagementStore(state => state.setSearchTerm);
+  const setFilterRole = useUserManagementStore(state => state.setFilterRole);
+  const setSelectedUser = useUserManagementStore(state => state.setSelectedUser);
+  const createUser = useUserManagementStore(state => state.createUser);
+  const updateUser = useUserManagementStore(state => state.updateUser);
+  const deleteUser = useUserManagementStore(state => state.deleteUser);
+  const toggleUserStatus = useUserManagementStore(state => state.toggleUserStatus);
+  const loadUsers = useUserManagementStore(state => state.loadUsers);
+  const getFilteredUsers = useUserManagementStore(state => state.getFilteredUsers);
+  const isSuperAdmin = useUserManagementStore(state => state.isSuperAdmin);
+  const exportUsers = useUserManagementStore(state => state.exportUsers);
+
+  // 📡 Operadores y asignaciones (fuente real en Firestore)
+  const operatorDocs = useAppStore(state => state.operators);
+  const operatorAssignments = useAppStore(state => state.operatorAssignments);
+  const removeStoreOperator = useAppStore(state => state.removeOperator);
+  const loadOperators = useAppStore(state => state.loadOperators);
+  const loadAssignments = useAppStore(state => state.loadAssignments);
+  const callData = useCallStore(state => state.callData);
 
   // UI Store hooks for toasts
   const showSuccess = useUIStore(state => state.showSuccess);
@@ -75,16 +93,106 @@ const SuperAdminDashboard = () => {
   const [actionLoading, setActionLoading] = useState(false);
   const [isCreatingTestUsers, setIsCreatingTestUsers] = useState(false);
   const [isCleaningTestUsers, setIsCleaningTestUsers] = useState(false);
+  const [deletingTeleopId, setDeletingTeleopId] = useState(null);
+  const [isMigrationRunning, setIsMigrationRunning] = useState(false);
+  const operatorsLoggedRef = useRef(false);
+  const [canonicalMetrics, setCanonicalMetrics] = useState(null);
+  const [canonicalSignature, setCanonicalSignature] = useState(null);
 
   // Verificar permisos
   const hasAccess = isSuperAdmin(user);
 
-  // Cargar datos al montar
+  // Loguear una sola vez cuando haya operadores disponibles
   useEffect(() => {
-    if (hasAccess) {
-      loadUsers();
+    if (!hasAccess || operatorsLoggedRef.current) return;
+    if (operatorDocs && operatorDocs.length > 0) {
+      operatorsLoggedRef.current = true;
+      if (import.meta.env.DEV) logger.debug('[Config] Operators loaded');
     }
-  }, [hasAccess, loadUsers]);
+  }, [hasAccess, operatorDocs]);
+
+  // Cargar usuarios desde userProfiles una sola vez
+  useEffect(() => {
+    if (!hasAccess || isLoaded || isLoading) return;
+    loadUsers?.();
+  }, [hasAccess, isLoaded, isLoading, loadUsers]);
+
+  // Cargar operators y assignments una sola vez
+  useEffect(() => {
+    if (!hasAccess) return;
+    loadOperators?.();
+    loadAssignments?.();
+  }, [hasAccess, loadOperators, loadAssignments]);
+  
+  // Calcular snapshot canónico de métricas fuera del render para evitar loops
+  useEffect(() => {
+    const hasCalls = Array.isArray(callData) && callData.length > 0;
+    const hasOperators = Array.isArray(operatorDocs) && operatorDocs.length > 0;
+    const assignmentLists = operatorAssignments && typeof operatorAssignments === 'object'
+      ? Object.values(operatorAssignments).filter(Array.isArray)
+      : [];
+    const assignmentsCount = assignmentLists.reduce((sum, list) => sum + list.length, 0);
+    const hasAssignments = assignmentsCount > 0;
+
+    const signature = `${hasCalls ? callData.length : 0}|${hasOperators ? operatorDocs.length : 0}|${assignmentsCount}`;
+
+    if (!hasCalls || !hasOperators || !hasAssignments) {
+      setCanonicalMetrics(null);
+      setCanonicalSignature(null);
+      return;
+    }
+
+    if (signature === canonicalSignature) return;
+
+    const canonicalAssignments = buildCanonicalAssignmentsSnapshot({
+      operators: operatorDocs || [],
+      assignments: operatorAssignments || {},
+    });
+
+    const operatorMeta = new Map();
+    (canonicalAssignments?.operators || []).forEach((op) => {
+      operatorMeta.set(op.id, {
+        email: op.email,
+        name: op.name || op.displayName || op.email || op.id,
+      });
+    });
+
+    const flatAssignments = Object.entries(canonicalAssignments?.assignmentsByOperatorId || {}).flatMap(
+      ([operatorId, list]) => {
+        const meta = operatorMeta.get(operatorId) || {};
+        if (!Array.isArray(list)) return [];
+        return list
+          .filter(Boolean)
+          .map((assignment) => ({
+            operatorId,
+            operatorEmail: meta.email,
+            operatorName: meta.name,
+            beneficiaryId: assignment?.beneficiaryId || assignment?.id,
+            beneficiaryName:
+              assignment?.beneficiary ||
+              assignment?.beneficiaryName ||
+              assignment?.name ||
+              assignment?.nombre,
+            phone: assignment?.phone || assignment?.primaryPhone || assignment?.telefono,
+            commune: assignment?.commune || assignment?.comuna,
+          }));
+      }
+    );
+
+    const snapshot = computeGlobalSnapshot({
+      calls: callData,
+      assignments: flatAssignments,
+      operators: (canonicalAssignments?.operators || []).map((op) => ({
+        id: op.id,
+        email: op.email,
+        name: op.name || op.displayName || op.email || op.id,
+        displayName: op.displayName || op.name,
+      })),
+    });
+
+    setCanonicalMetrics(snapshot?.calls || null);
+    setCanonicalSignature(signature);
+  }, [callData, operatorDocs, operatorAssignments, canonicalSignature]);
 
   // Usuarios filtrados
   const filteredUsers = getFilteredUsers();
@@ -114,7 +222,9 @@ const SuperAdminDashboard = () => {
   const tabs = [
     { id: 'overview', label: 'Resumen', icon: BarChart3 },
     { id: 'users', label: 'Usuarios', icon: Users },
+    { id: 'teleops', label: 'Teleoperadoras', icon: Users },
     { id: 'system', label: 'Sistema', icon: Settings },
+    { id: 'appTests', label: 'Pruebas APP', icon: ClipboardList },
     { id: 'security', label: 'Seguridad', icon: Shield },
     { id: 'development', label: 'Desarrollo', icon: Zap }
   ];
@@ -123,32 +233,45 @@ const SuperAdminDashboard = () => {
   const handleCreateUser = async (userData) => {
     setActionLoading(true);
     try {
-      logger.auth('Iniciando creación inteligente de usuario:', userData.email);
-      
-      // Importar servicio inteligente
+      logger.auth('Iniciando creación de usuario/teleoperadora:', userData.email);
+
+      // Flujo canónico para teleoperadoras: perfil + operator + assignments
+      if (userData.role === 'teleoperadora') {
+        const { userProfile, operator } = await teleoperatorService.createTeleoperator({
+          displayName: userData.displayName,
+          email: userData.email,
+          phone: userData.phone
+        });
+
+        await loadUsers?.();
+        await loadOperators?.();
+        await loadAssignments?.();
+
+        setShowCreateModal(false);
+        showSuccess(
+          `Teleoperadora creada y vinculada\n\n` +
+          `📧 Email: ${userProfile.email}\n` +
+          `👤 Operador: ${operator?.name || userProfile.displayName}`
+        );
+        return;
+      }
+
+      // Otros roles mantienen el flujo inteligente + store local
       const { smartUserCreationService } = await import('../../services/smartUserCreationService');
-      
-      // Usar creación inteligente que maneja automáticamente la sincronización
       const result = await smartUserCreationService.createUserIntelligent(userData);
-      
+
       logger.auth('Usuario creado con sistema inteligente:', result);
-      
-      // También usar el método tradicional como respaldo
+
       await createUser(userData);
-      
+
       setShowCreateModal(false);
-      
-      // Mostrar mensaje de éxito con instrucciones
+
       showSuccess(
         `Usuario creado exitosamente\n\n` +
         `📧 Email: ${userData.email}\n` +
-        `👤 Rol: ${userData.role}\n\n` +
-        `Instrucciones:\n` +
-        `1. El usuario debe registrarse en Firebase Auth con el email: ${userData.email}\n` +
-        `2. Una vez registrado, será reconocido automáticamente con el rol asignado\n` +
-        `3. No necesita pasos adicionales - la sincronización es automática`
+        `👤 Rol: ${userData.role}`
       );
-      
+
     } catch (error) {
       logger.error('Error creando usuario:', error);
       showError('Error al crear usuario: ' + error.message);
@@ -237,7 +360,6 @@ const SuperAdminDashboard = () => {
     setIsCreatingTestUsers(true);
     try {
       await userManagementService.createTestUsers();
-      await loadUsers();
       showSuccess('Usuarios de prueba creados correctamente');
     } catch (error) {
       logger.error('Error creando usuarios de prueba:', error);
@@ -254,7 +376,6 @@ const SuperAdminDashboard = () => {
     setIsCleaningTestUsers(true);
     try {
       await userManagementService.cleanTestUsers();
-      await loadUsers();
       showSuccess('Usuarios de prueba eliminados correctamente');
     } catch (error) {
       logger.error('Error limpiando usuarios de prueba:', error);
@@ -264,8 +385,93 @@ const SuperAdminDashboard = () => {
     }
   };
 
+  // Eliminar teleoperadora directamente desde operators
+  const handleDeleteTeleop = async (operatorId) => {
+    if (!confirm('¿Eliminar esta teleoperadora? Esta acción eliminará también sus asignaciones.')) return;
+
+    setDeletingTeleopId(operatorId);
+    try {
+      await operatorService.delete(operatorId);
+      await assignmentService.deleteOperatorAssignments(null, operatorId);
+      removeStoreOperator?.(operatorId);
+      showSuccess('Teleoperadora eliminada');
+    } catch (error) {
+      logger.error('Error eliminando teleoperadora:', error);
+      showError('No se pudo eliminar la teleoperadora');
+    } finally {
+      setDeletingTeleopId(null);
+    }
+  };
+
+  const handleRunAssignmentsMigration = async () => {
+    if (!hasAccess || isMigrationRunning) return;
+
+    setIsMigrationRunning(true);
+    console.log('🚀 Migración (dryRun) iniciada');
+
+    try {
+      // Paso 1: Dry run
+      const drySummary = await runAssignmentOperatorMigration({ dryRun: true });
+      const uniqueOperatorsToCreate = Array.from(new Set(drySummary.operatorsToCreate || []));
+      const uniqueResolvable = Array.from(new Set(drySummary.resolvableAssignments || []));
+      const unresolvedCount = drySummary.unresolvedLegacyAssignments?.length || 0;
+
+      console.log('✅ DryRun completado', drySummary);
+
+      // Bloqueo si el dry-run no coincide con expectativas mínimas
+      const minOperatorsExpected = 2;
+      const minAssignmentsExpected = 300; // ~400 esperado
+      const resolvableCount = drySummary.resolvableAssignments?.length || 0;
+
+      const summaryText =
+        'DryRun migración:\n' +
+        `Operadores a crear: ${uniqueOperatorsToCreate.length}\n` +
+        `Asignaciones resolubles: ${resolvableCount}\n` +
+        `Legacy sin email (@): ${unresolvedCount}\n` +
+        `Errores: ${drySummary.errors || 0}\n` +
+        `Docs leídos: ${drySummary.totalAssignmentDocs ?? 'n/a'}\n` +
+        `Items leídos: ${drySummary.totalAssignmentItems ?? 'n/a'}\n`;
+
+      const proceed = uniqueOperatorsToCreate.length >= minOperatorsExpected && resolvableCount >= minAssignmentsExpected
+        ? confirm(summaryText + '\n\n¿Ejecutar migración real?')
+        : (alert(summaryText + '\n\n⚠️ Resumen no coincide con expectativas. Migración BLOQUEADA.'), false);
+
+      if (!proceed) {
+        alert('Migración cancelada después de dryRun. No se realizaron cambios.');
+        return;
+      }
+
+      console.log('🚀 Migración real iniciada');
+      const summary = await runAssignmentOperatorMigration({ dryRun: false });
+      console.log('✅ Migración completada', summary);
+
+      await loadOperators?.();
+      await loadAssignments?.();
+
+      const uniqueCreated = Array.from(new Set(summary?.operatorsToCreate || []));
+      const uniqueResolvableFinal = Array.from(new Set(summary?.resolvableAssignments || []));
+      const unresolvedFinal = summary?.unresolvedLegacyAssignments?.length || 0;
+
+      alert(
+        'Migración completada:\n' +
+        `migrated: ${summary?.migrated ?? 0}\n` +
+        `skipped: ${summary?.skipped ?? 0}\n` +
+        `errors: ${summary?.errors ?? 0}\n` +
+        `operadores creados: ${uniqueCreated.length}\n` +
+        `asignaciones resolubles: ${uniqueResolvableFinal.length}\n` +
+        `legacy sin email (@): ${unresolvedFinal}`
+      );
+    } catch (error) {
+      console.error('❌ Error en migración', error);
+      const message = error?.message || 'No se pudo ejecutar la migración (Firestore no está listo o sin permisos).';
+      alert(`Error al ejecutar migración:\n${message}`);
+    } finally {
+      setIsMigrationRunning(false);
+    }
+  };
+
   // Componente de carga
-  if (isLoading) {
+  if (isLoading && !isLoaded) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
         <motion.div
@@ -296,17 +502,7 @@ const SuperAdminDashboard = () => {
               </div>
             </div>
             
-            <div className="flex items-center space-x-3">
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => loadUsers()}
-                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/25"
-              >
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Actualizar
-              </motion.button>
-            </div>
+            <div className="flex items-center space-x-3"></div>
           </div>
         </div>
       </div>
@@ -345,10 +541,12 @@ const SuperAdminDashboard = () => {
             <OverviewTab 
               stats={stats} 
               users={users} 
+              teleopCount={operatorDocs.length}
               onCreateTestUsers={handleCreateTestUsers}
               onCleanTestUsers={handleCleanTestUsers}
               isCreatingTestUsers={isCreatingTestUsers}
               isCleaningTestUsers={isCleaningTestUsers}
+              canonicalMetrics={canonicalMetrics}
             />
           )}
           
@@ -370,8 +568,21 @@ const SuperAdminDashboard = () => {
               roles={roles}
             />
           )}
+
+          {activeTab === 'teleops' && (
+            <TeleoperatorsTab
+              operators={operatorDocs}
+              operatorAssignments={operatorAssignments}
+              onDelete={handleDeleteTeleop}
+              deletingId={deletingTeleopId}
+              onRunMigration={handleRunAssignmentsMigration}
+              isMigrationRunning={isMigrationRunning}
+              showMigrationButton={hasAccess}
+            />
+          )}
           
           {activeTab === 'system' && <SystemTab />}
+          {activeTab === 'appTests' && <AppTestsTab />}
           {activeTab === 'security' && <SecurityTab />}
           {activeTab === 'development' && <DevelopmentTab />}
         </AnimatePresence>
@@ -405,11 +616,19 @@ const SuperAdminDashboard = () => {
 const OverviewTab = ({ 
   stats, 
   users, 
+  teleopCount,
   onCreateTestUsers, 
   onCleanTestUsers, 
   isCreatingTestUsers, 
-  isCleaningTestUsers 
+  isCleaningTestUsers,
+  canonicalMetrics
 }) => {
+  const canonicalTotals = {
+    total: canonicalMetrics?.totalCalls ?? 0,
+    successful: canonicalMetrics?.successfulCalls ?? 0,
+    failed: canonicalMetrics?.failedCalls ?? 0,
+    unresolved: canonicalMetrics?.unresolvedCalls ?? 0,
+  };
   const statsCards = [
     {
       title: 'Total Usuarios',
@@ -437,7 +656,7 @@ const OverviewTab = ({
     },
     {
       title: 'Teleoperadoras',
-      value: stats.teleoperadoraUsers || 0,
+      value: teleopCount || 0,
       icon: Shield,
       color: 'from-orange-500 to-orange-600',
       bgColor: 'bg-orange-50',
@@ -517,6 +736,52 @@ const OverviewTab = ({
             {isCleaningTestUsers ? 'Limpiando...' : 'Limpiar Usuarios de Prueba'}
           </motion.button>
         </div>
+      </div>
+
+      {/* Auditoría de Llamadas (AMAIA) */}
+      <div className="bg-white rounded-2xl shadow-lg p-8">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="h-6 w-6 text-indigo-600" />
+            <h3 className="text-xl font-semibold text-gray-900">Auditoría de Llamadas (AMAIA)</h3>
+          </div>
+          <span className="text-xs font-semibold text-indigo-700 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100">
+            Read-only
+          </span>
+        </div>
+
+        {canonicalMetrics ? (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-gradient-to-br from-indigo-50 to-white rounded-xl p-4 border border-indigo-100">
+                <p className="text-xs text-gray-600 mb-1">Total de llamadas auditables en el período</p>
+                <p className="text-3xl font-bold text-gray-900">{canonicalTotals.total}</p>
+              </div>
+              <div className="bg-gradient-to-br from-emerald-50 to-white rounded-xl p-4 border border-emerald-100">
+                <p className="text-xs text-gray-600 mb-1">Exitosas</p>
+                <p className="text-3xl font-bold text-emerald-700">{canonicalTotals.successful}</p>
+              </div>
+              <div className="bg-gradient-to-br from-rose-50 to-white rounded-xl p-4 border border-rose-100">
+                <p className="text-xs text-gray-600 mb-1">Llamadas sin respuesta</p>
+                <p className="text-3xl font-bold text-rose-700">{canonicalTotals.failed}</p>
+              </div>
+              <div className="bg-gradient-to-br from-amber-50 to-white rounded-xl p-4 border border-amber-200">
+                <p className="text-xs text-gray-600 mb-1">Llamadas No Identificadas (PIN)</p>
+                <p className="text-3xl font-bold text-amber-700">{canonicalTotals.unresolved}</p>
+              </div>
+            </div>
+            <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5" />
+              <p className="text-sm text-gray-800">
+                Hay {canonicalTotals.unresolved} llamadas con números no identificados que deben ser actualizados en Asignaciones.
+              </p>
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-gray-600">
+            Carga llamadas y asignaciones para visualizar el estado auditable según el contrato de métricas vigente.
+          </p>
+        )}
       </div>
 
       {/* Información del sistema */}
@@ -706,6 +971,135 @@ const UsersTab = ({
   );
 };
 
+const TeleoperatorsTab = ({ 
+  operators, 
+  operatorAssignments, 
+  onDelete, 
+  deletingId,
+  onRunMigration,
+  isMigrationRunning,
+  showMigrationButton
+}) => {
+  const {
+    validOperators,
+    assignmentsByOperator: canonicalAssignmentsByOperator,
+    totalAssignments,
+    operatorsWithAssignments
+  } = getCanonicalAssignmentsMetrics(operators, operatorAssignments);
+
+  return (
+    <motion.div
+      key="teleops"
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      className="space-y-6"
+    >
+      <div className="bg-white rounded-2xl shadow-lg p-6 flex flex-col gap-4">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">Teleoperadoras (operators)</h3>
+            <p className="text-gray-600 text-sm">
+              Fuente única: colección operators. Las asignaciones solo existen para operadores reales.
+            </p>
+          </div>
+
+          {showMigrationButton && (
+            <div className="w-full md:w-auto flex flex-col sm:flex-row sm:items-center gap-3">
+              {/* TODO: eliminar este botón luego de migración PRD */}
+              <motion.button
+                whileHover={{ scale: isMigrationRunning ? 1 : 1.02 }}
+                whileTap={{ scale: isMigrationRunning ? 1 : 0.98 }}
+                onClick={() => onRunMigration?.()}
+                disabled={isMigrationRunning}
+                className={`w-full md:w-auto px-4 py-2 rounded-lg font-semibold text-sm shadow-md transition-all duration-200 text-white
+                  ${isMigrationRunning
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600'}
+                `}
+              >
+                {isMigrationRunning ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Migrando...
+                  </span>
+                ) : (
+                  'Ejecutar Migración Operators / Assignments (Admin)'
+                )}
+              </motion.button>
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-blue-50 rounded-lg p-4 flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600">Teleoperadoras reales</p>
+              <p className="text-2xl font-bold text-blue-700">{validOperators.length}</p>
+            </div>
+            <Users className="w-8 h-8 text-blue-500" />
+          </div>
+          <div className="bg-green-50 rounded-lg p-4 flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600">Asignaciones totales</p>
+              <p className="text-2xl font-bold text-green-700">{totalAssignments}</p>
+            </div>
+            <Database className="w-8 h-8 text-green-500" />
+          </div>
+          <div className="bg-purple-50 rounded-lg p-4 flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600">Operadores con asignaciones</p>
+              <p className="text-2xl font-bold text-purple-700">{operatorsWithAssignments}</p>
+            </div>
+            <FileSpreadsheet className="w-8 h-8 text-purple-500" />
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-lg p-6 divide-y divide-gray-100">
+        {validOperators.length === 0 && (
+          <div className="py-8 text-center">
+            <AlertTriangle className="h-10 w-10 text-gray-400 mx-auto mb-3" />
+            <p className="text-gray-700 font-medium">No hay teleoperadoras en operators</p>
+            <p className="text-gray-500 text-sm">Crea una teleoperadora desde Asignaciones o mediante operadorService.</p>
+          </div>
+        )}
+
+        {validOperators.map((operator) => {
+          const assignmentCount = canonicalAssignmentsByOperator?.[operator.id]?.length || 0;
+          const displayName = operator.name || operator.displayName || operator.email;
+
+          return (
+            <div key={operator.id} className="py-4 flex items-center justify-between">
+              <div>
+                <h4 className="text-base font-semibold text-gray-900">{displayName || 'No asignada'}</h4>
+                <p className="text-sm text-gray-600">{operator.email || 'Sin email'}</p>
+                {operator.phone && (
+                  <p className="text-sm text-gray-500">{operator.phone}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                  {assignmentCount} asignaciones
+                </span>
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => onDelete(operator.id)}
+                  disabled={deletingId === operator.id}
+                  className="p-2 rounded-lg text-red-600 hover:bg-red-50 disabled:opacity-60"
+                >
+                  {deletingId === operator.id ? '...' : <Trash2 className="h-5 w-5" />}
+                </motion.button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </motion.div>
+  );
+};
+
 // Tab de Desarrollo - Herramientas de diagnóstico y debugging
 const DevelopmentTab = () => {
   const { 
@@ -717,7 +1111,7 @@ const DevelopmentTab = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDiagnosing, setIsDiagnosing] = useState(false);
   const [isReanalyzing, setIsReanalyzing] = useState(false);
-  
+
   const handleRefreshData = async () => {
     setIsRefreshing(true);
     try {
@@ -943,6 +1337,307 @@ const DevelopmentTab = () => {
           </div>
         </div>
       </div>
+    </motion.div>
+  );
+};
+
+const AppTestsTab = () => {
+  const [report, setReport] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState(null);
+
+  const { user } = useAuth();
+  const users = useUserManagementStore(state => state.users);
+  const operators = useAppStore(state => state.operators);
+  const operatorAssignments = useAppStore(state => state.operatorAssignments);
+  const callData = useCallStore(state => state.callData);
+
+  const statusStyles = {
+    OK: { bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-700', icon: CheckCircle },
+    WARN: { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700', icon: AlertTriangle },
+    FAIL: { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700', icon: XCircle },
+    SKIPPED: { bg: 'bg-slate-50', border: 'border-slate-200', text: 'text-slate-600', icon: EyeOff },
+  };
+
+  const formatMs = (value) => `${value.toFixed(1)} ms`;
+
+  const normalizeEmail = (value) => (value || '').trim().toLowerCase();
+
+  const buildAssignmentsSnapshotForAudit = () =>
+    buildCanonicalAssignmentsSnapshot({
+      operators: operators || [],
+      assignments: operatorAssignments || {},
+    });
+
+  // Export helpers (read-only, sin normalizar ni mutar estado)
+  const downloadJSON = (filename, data) => {
+    try {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error exportando JSON', err);
+    }
+  };
+
+  const buildUsersSnapshot = () =>
+    Array.isArray(users)
+      ? users.map((u) => ({
+          id: u?.id ?? null,
+          uuid: u?.uid ?? u?.id ?? null,
+          email: u?.email ?? null,
+          role: u?.role ?? u?.userRole ?? null,
+          status: u?.status ?? (u?.isActive === false ? 'inactive' : 'active'),
+        }))
+      : [];
+
+  const buildOperatorsSnapshot = () =>
+    Array.isArray(operators)
+      ? operators.map((op) => ({
+          operatorId: op?.id ?? null,
+          userId: op?.userId ?? null,
+          status: op?.status ?? (op?.isActive === false ? 'inactive' : 'active'),
+        }))
+      : [];
+
+  const buildOperatorAssignmentsSnapshot = () => operatorAssignments || {};
+
+  const buildMetricsSnapshotForAudit = (canonicalSnapshot) => {
+    const operatorMeta = new Map();
+    (canonicalSnapshot?.operators || []).forEach((op) => {
+      operatorMeta.set(op.id, {
+        email: op.email,
+        name: op.name || op.displayName || op.email || op.id,
+      });
+    });
+
+    const flatAssignments = Object.entries(canonicalSnapshot?.assignmentsByOperatorId || {}).flatMap(
+      ([operatorId, list]) => {
+        const meta = operatorMeta.get(operatorId) || {};
+        if (!Array.isArray(list)) return [];
+        return list
+          .filter(Boolean)
+          .map((assignment) => ({
+            operatorId,
+            operatorEmail: meta.email,
+            operatorName: meta.name,
+            beneficiaryId: assignment?.beneficiaryId || assignment?.id,
+            beneficiaryName:
+              assignment?.beneficiary ||
+              assignment?.beneficiaryName ||
+              assignment?.name ||
+              assignment?.nombre,
+            phone: assignment?.phone || assignment?.primaryPhone || assignment?.telefono,
+            commune: assignment?.commune || assignment?.comuna,
+          }));
+      }
+    );
+
+    const hasCalls = Array.isArray(callData) && callData.length > 0;
+    const hasAssignments = flatAssignments.length > 0;
+    if (!hasCalls && !hasAssignments) return null;
+
+    return computeGlobalSnapshot({
+      calls: Array.isArray(callData) ? callData : [],
+      assignments: flatAssignments,
+      operators: (canonicalSnapshot?.operators || []).map((op) => ({
+        id: op.id,
+        email: op.email,
+        name: op.name || op.displayName || op.email || op.id,
+        displayName: op.displayName || op.name,
+      })),
+    });
+  };
+
+  const handleExportUsers = () => downloadJSON('usersSnapshot.json', buildUsersSnapshot());
+  const handleExportOperators = () => downloadJSON('operatorsSnapshot.json', buildOperatorsSnapshot());
+  const handleExportAssignments = () => downloadJSON('operatorAssignmentsSnapshot.json', buildOperatorAssignmentsSnapshot());
+  const handleExportMetrics = () => {
+    const canonicalSnapshot = buildAssignmentsSnapshotForAudit();
+    const metricsSnapshot = buildMetricsSnapshotForAudit(canonicalSnapshot);
+    if (metricsSnapshot) {
+      const minimal = {
+        totalCalls: metricsSnapshot.calls?.totalCalls ?? 0,
+        successfulCalls: metricsSnapshot.calls?.successfulCalls ?? 0,
+        failedCalls: metricsSnapshot.calls?.failedCalls ?? 0,
+        raw: metricsSnapshot,
+      };
+      downloadJSON('metricsSnapshot.json', minimal);
+    }
+  };
+
+  const buildAuditContext = () => {
+    const canonicalSnapshot = buildAssignmentsSnapshotForAudit();
+    const profile = (() => {
+      const email = normalizeEmail(user?.email);
+      if (!email || !Array.isArray(users)) return null;
+      return users.find((u) => normalizeEmail(u?.email) === email) || null;
+    })();
+
+    return {
+      environment: import.meta?.env?.MODE || 'unknown',
+      currentUser: user,
+      userProfile: profile,
+      users,
+      operators,
+      assignmentsSnapshot: canonicalSnapshot,
+      metricsSnapshot: buildMetricsSnapshotForAudit(canonicalSnapshot),
+    };
+  };
+
+  const handleRunAudit = async () => {
+    setRunning(true);
+    setError(null);
+    try {
+      const context = buildAuditContext();
+      const result = await auditService.runAudit(context);
+      setReport(result);
+    } catch (err) {
+      setError(err?.message || 'Error ejecutando la auditoría');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const summary = report?.summary;
+
+  return (
+    <motion.div
+      key="appTests"
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      className="bg-white rounded-2xl shadow-lg p-8 space-y-6"
+    >
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h3 className="text-xl font-semibold text-gray-900">Pruebas APP (Auditoría Interna)</h3>
+          <p className="text-sm text-gray-600">Ejecución manual, solo visible para SUPER_ADMIN.</p>
+        </div>
+        <button
+          onClick={handleRunAudit}
+          disabled={running}
+          className={`inline-flex items-center px-4 py-2 rounded-lg font-semibold text-white transition-colors ${
+            running ? 'bg-slate-400 cursor-not-allowed' : 'bg-slate-900 hover:bg-slate-800'
+          }`}
+        >
+          {running ? 'Ejecutando...' : 'Ejecutar Auditoría del Sistema'}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+        <button
+          onClick={handleExportUsers}
+          className="border border-slate-200 rounded-lg p-3 text-sm text-slate-800 hover:bg-slate-50 text-left"
+        >
+          Exportar usersSnapshot.json
+        </button>
+        <button
+          onClick={handleExportOperators}
+          className="border border-slate-200 rounded-lg p-3 text-sm text-slate-800 hover:bg-slate-50 text-left"
+        >
+          Exportar operatorsSnapshot.json
+        </button>
+        <button
+          onClick={handleExportAssignments}
+          className="border border-slate-200 rounded-lg p-3 text-sm text-slate-800 hover:bg-slate-50 text-left"
+        >
+          Exportar operatorAssignmentsSnapshot.json
+        </button>
+        <button
+          onClick={handleExportMetrics}
+          className="border border-slate-200 rounded-lg p-3 text-sm text-slate-800 hover:bg-slate-50 text-left"
+        >
+          Exportar metricsSnapshot.json
+        </button>
+      </div>
+
+      {running && (
+        <div className="flex items-center gap-3 text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+          <RefreshCw className="w-4 h-4 animate-spin" />
+          Ejecutando checks internos...
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
+          {error}
+        </div>
+      )}
+
+      {summary && (
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div className="rounded-lg border border-slate-200 p-4">
+            <p className="text-xs text-slate-500">Total checks</p>
+            <p className="text-2xl font-bold text-slate-900">{summary.total}</p>
+          </div>
+          <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+            <p className="text-xs text-green-700">OK</p>
+            <p className="text-2xl font-bold text-green-800">{summary.ok}</p>
+          </div>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <p className="text-xs text-amber-700">WARN</p>
+            <p className="text-2xl font-bold text-amber-800">{summary.warn}</p>
+          </div>
+          <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-xs text-red-700">FAIL</p>
+            <p className="text-2xl font-bold text-red-800">{summary.fail}</p>
+            <p className="text-xs text-red-600 mt-1">{formatMs(summary.durationMs)}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs text-slate-600">SKIPPED</p>
+            <p className="text-2xl font-bold text-slate-800">{summary.skipped}</p>
+          </div>
+        </div>
+      )}
+
+      {report && (
+        <div className="space-y-3">
+          {report.results.map((item) => {
+            const style = statusStyles[item.status] || statusStyles.WARN;
+            const Icon = style.icon;
+            return (
+              <div
+                key={item.id}
+                className={`flex items-start gap-3 rounded-lg border ${style.border} ${style.bg} p-4`}
+              >
+                <Icon className={`w-5 h-5 ${style.text}`} />
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className={`font-semibold ${style.text}`}>{item.label}</p>
+                      <p className="text-xs text-slate-500">ID: {item.id}</p>
+                    </div>
+                    <span className="text-xs text-slate-600">{formatMs(item.durationMs)}</span>
+                  </div>
+                  {(item.summary || item.details || item.remediationHint) && (
+                    <div className="mt-1 space-y-1">
+                      {item.summary && <p className="text-sm text-slate-800">{item.summary}</p>}
+                      {item.details && <p className="text-sm text-slate-700">{item.details}</p>}
+                      {item.remediationHint && (
+                        <p className="text-xs text-slate-500">Sugerencia: {item.remediationHint}</p>
+                      )}
+                      {Array.isArray(item.affectedEntities) && item.affectedEntities.length > 0 && (
+                        <p className="text-xs text-slate-500">Entidades afectadas: {item.affectedEntities.length}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!report && !running && !error && (
+        <div className="text-sm text-slate-600 bg-slate-50 border border-dashed border-slate-200 rounded-lg p-4">
+          Ejecuta la auditoría para ver resultados. No se ejecuta automáticamente.
+        </div>
+      )}
     </motion.div>
   );
 };

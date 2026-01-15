@@ -16,8 +16,8 @@ import { useSeguimientosStore } from '../../stores/useSeguimientosStore';
 import { useMetricsWithFallback } from '../../utils/fallbackMetrics';
 import { BarChart3, FileSpreadsheet, TrendingUp, Users, Clock, Phone, User, Download, FileText, Printer, Zap } from 'lucide-react';
 import { findOperatorForBeneficiary, shouldExcludeAsOperator } from '../../utils/operatorMapping';
-import { computeGlobalMetrics, formatMetricsForUI } from '../../services/metricsEngine';
-import { normalizeRecords } from '../../utils/dataNormalizer';
+import { getAuditSnapshot } from '../../services/metricsService';
+import useAppStore from '../../stores/useAppStore';
 import logger from '../../utils/logger';
 
 function AuditDemo() {
@@ -29,32 +29,49 @@ function AuditDemo() {
   const { showError } = useUIStore();
 
   // ⚡ FASE 4: Normalización y métricas unificadas
-  const normalizedData = useMemo(() => {
-    const allRecords = [...(callData || []), ...(seguimientos || [])];
-    logger.audit('[AuditDemo] Normalizando registros', {
-      callData: callData.length,
-      seguimientos: seguimientos.length,
-      total: allRecords.length
-    });
-    return normalizeRecords(allRecords);
-  }, [callData, seguimientos]);
+  const snapshot = useMemo(() => {
+    try {
+      return getAuditSnapshot({
+        calls: callData,
+        seguimientos,
+        operators,
+        operatorAssignments,
+      });
+    } catch (error) {
+      logger.error('[AuditDemo] Error calculando snapshot', error);
+      return null;
+    }
+  }, [callData, seguimientos, operators, operatorAssignments]);
 
   const unifiedMetrics = useMemo(() => {
-    const metrics = computeGlobalMetrics(normalizedData, {
-      includeTopOperators: true,
-      topN: 10,
-      includeHourly: true
-    });
-    logger.audit('[AuditDemo] Métricas calculadas', {
-      total: metrics.total,
-      tasaExito: metrics.tasaExito,
-      operadoras: metrics.porOperadora?.length || 0
-    });
-    return metrics;
-  }, [normalizedData]);
+    if (!snapshot?.summary) return null;
+    const summary = snapshot.summary;
+    const operatorList = Object.values(snapshot.perOperator || {});
+    return {
+      total: summary.totalCalls,
+      exitosas: summary.successfulCalls,
+      fallidas: summary.failedCalls,
+      tasaExito: summary.successRate,
+      beneficiariosUnicos: summary.uniqueBeneficiariesContacted,
+      duracionPromedio: summary.avgMinutesPerCall,
+      porOperadora: operatorList.map((op) => ({
+        operatorName: op.displayName,
+        total: op.calls.totalCalls,
+        exitosas: op.calls.successfulCalls,
+        fallidas: op.calls.failedCalls,
+        duracionPromedio: op.calls.avgMinutesPerCall,
+        beneficiariosUnicos: op.calls.uniqueBeneficiariesContacted,
+      })),
+    };
+  }, [snapshot]);
 
   const formattedMetrics = useMemo(() => {
-    return formatMetricsForUI(unifiedMetrics, 'es-CL');
+    if (!unifiedMetrics) return { totalFormatted: '0', tasaExitoFormatted: '0%', duracionPromedioFormatted: '0' };
+    return {
+      totalFormatted: (unifiedMetrics.total || 0).toLocaleString('es-CL'),
+      tasaExitoFormatted: `${(unifiedMetrics.tasaExito || 0).toFixed(1)}%`,
+      duracionPromedioFormatted: (unifiedMetrics.duracionPromedio || 0).toFixed(1),
+    };
   }, [unifiedMetrics]);
 
   // 🔄 Mantener compatibilidad con metricsStore para listeners existentes
@@ -124,91 +141,73 @@ function AuditDemo() {
 
   // ⚡ FASE 4 - TAREA 2: Métricas por operadora desde motor unificado
   const getOperatorCallMetrics = () => {
-    logger.audit('[AuditDemo] Calculando métricas por operadora desde metricsEngine');
-    
-    if (!unifiedMetrics || !unifiedMetrics.porOperadora || unifiedMetrics.porOperadora.length === 0) {
+    logger.audit('[AuditDemo] Calculando métricas por operadora desde metricsService');
+
+    if (!snapshot?.perOperator || Object.keys(snapshot.perOperator).length === 0) {
       logger.warn('[AuditDemo] No hay métricas por operadora disponibles');
-      
+
       if (shouldUseFallback) {
         const topOperators = fallbackMetrics.getTopOperators(10);
         logger.audit('[AuditDemo] Usando fallback metrics', { operatorCount: topOperators.length });
-        
-        return topOperators.map((operator, index) => {
-          const operatorInfo = operators?.find(op => 
-            op.name === operator.operatorName || 
-            op.id === operator.id ||
-            op.name?.toLowerCase().includes((operator.operatorName || '').toLowerCase())
-          ) || {
+
+        return topOperators.map((operator, index) => ({
+          operatorName: operator.operatorName,
+          operatorInfo: {
             id: operator.id || `op-${index}`,
             name: operator.operatorName || `Operador ${index + 1}`,
             email: `${(operator.operatorName || '').toLowerCase().replace(/\s+/g, '.')}@mistatas.com`
-          };
-          
-          return {
-            operatorName: operator.operatorName,
-            operatorInfo: operatorInfo,
-            totalCalls: operator.totalCalls,
-            assignedBeneficiaries: operator.uniqueBeneficiaries,
-            contactedBeneficiaries: operator.uniqueBeneficiaries,
-            uncontactedBeneficiaries: 0,
-            successfulCalls: operator.successfulCalls,
-            failedCalls: operator.failedCalls || (operator.totalCalls - operator.successfulCalls),
-            successRate: operator.successRate,
-            totalEffectiveMinutes: Math.round((operator.successfulCalls * (operator.averageDuration / 60)) * 10) / 10,
-            averageMinutesPerCall: Math.round((operator.averageDuration / 60) * 10) / 10,
-            averageCallsPerBeneficiary: Math.round((operator.totalCalls / operator.uniqueBeneficiaries) * 10) / 10,
-            beneficiariesWithCalls: operator.uniqueBeneficiaries,
-            allCallsData: []
-          };
-        });
+          },
+          totalCalls: operator.totalCalls,
+          assignedBeneficiaries: operator.uniqueBeneficiaries,
+          contactedBeneficiaries: operator.uniqueBeneficiaries,
+          uncontactedBeneficiaries: 0,
+          successfulCalls: operator.successfulCalls,
+          failedCalls: operator.failedCalls || (operator.totalCalls - operator.successfulCalls),
+          successRate: operator.successRate,
+          totalEffectiveMinutes: Math.round((operator.successfulCalls * (operator.averageDuration / 60)) * 10) / 10,
+          averageMinutesPerCall: Math.round((operator.averageDuration / 60) * 10) / 10,
+          averageCallsPerBeneficiary: Math.round((operator.totalCalls / operator.uniqueBeneficiaries) * 10) / 10,
+          beneficiariesWithCalls: operator.uniqueBeneficiaries,
+          allCallsData: [],
+        }));
       }
-      
+
       return [];
     }
 
-    // ⚡ USAR MÉTRICAS UNIFICADAS (metricsEngine.js)
-    logger.audit('[AuditDemo] Usando métricas unificadas', { 
-      operatorCount: unifiedMetrics.porOperadora.length,
-      total: unifiedMetrics.total
-    });
-    
-    return unifiedMetrics.porOperadora.map((operatorMetrics, index) => {
-      const operatorInfo = operators?.find(op => 
-        op.name === operatorMetrics.operatorName || 
-        op.name?.toLowerCase().includes(operatorMetrics.operatorName.toLowerCase())
-      ) || {
-        id: `op-${index}`,
-        name: operatorMetrics.operatorName,
-        email: `${operatorMetrics.operatorName.toLowerCase().replace(/\s+/g, '.')}@mistatas.com`
-      };
-      
-      const assignedBeneficiariesArray = operatorAssignments?.[operatorInfo.id] || [];
-      const assignedBeneficiaries = assignedBeneficiariesArray.length || operatorMetrics.beneficiariosUnicos;
-      const contactedBeneficiaries = operatorMetrics.beneficiariosUnicos;
-      const uncontactedBeneficiaries = Math.max(0, assignedBeneficiaries - contactedBeneficiaries);
-      
-      const totalEffectiveMinutes = Math.round((operatorMetrics.duracionPromedio * operatorMetrics.exitosas / 60) * 10) / 10;
-      const averageMinutesPerCall = Math.round((operatorMetrics.duracionPromedio / 60) * 10) / 10;
-      const averageCallsPerBeneficiary = operatorMetrics.beneficiariosUnicos > 0 ? 
-        Math.round((operatorMetrics.total / operatorMetrics.beneficiariosUnicos) * 10) / 10 : 0;
+    return Object.values(snapshot.perOperator)
+      .map((op, index) => {
+        const assignedBeneficiaries = op.assignments.totalAssigned;
+        const contactedBeneficiaries = op.assignments.contactedBeneficiaries;
+        const uncontactedBeneficiaries = op.assignments.uncontactedBeneficiaries;
+        const totalEffectiveMinutes = op.calls.effectiveMinutes || 0;
+        const averageMinutesPerCall = op.calls.avgMinutesPerCall || 0;
+        const averageCallsPerBeneficiary = op.calls.uniqueBeneficiariesContacted > 0
+          ? Math.round((op.calls.totalCalls / op.calls.uniqueBeneficiariesContacted) * 10) / 10
+          : 0;
 
-      return {
-        operatorName: operatorMetrics.operatorName,
-        operatorInfo: operatorInfo,
-        totalCalls: operatorMetrics.total,
-        assignedBeneficiaries: assignedBeneficiaries,
-        contactedBeneficiaries: contactedBeneficiaries,
-        uncontactedBeneficiaries: uncontactedBeneficiaries,
-        successfulCalls: operatorMetrics.exitosas,
-        failedCalls: operatorMetrics.fallidas,
-        successRate: operatorMetrics.tasaExito,
-        totalEffectiveMinutes: totalEffectiveMinutes,
-        averageMinutesPerCall: averageMinutesPerCall,
-        averageCallsPerBeneficiary: averageCallsPerBeneficiary,
-        beneficiariesWithCalls: contactedBeneficiaries,
-        allCallsData: [] // No incluir datos individuales para PDF
-      };
-    }).sort((a, b) => b.totalCalls - a.totalCalls);
+        return {
+          operatorName: op.displayName,
+          operatorInfo: {
+            id: op.operatorId || `op-${index}`,
+            name: op.displayName,
+            email: op.email,
+          },
+          totalCalls: op.calls.totalCalls,
+          assignedBeneficiaries,
+          contactedBeneficiaries,
+          uncontactedBeneficiaries,
+          successfulCalls: op.calls.successfulCalls,
+          failedCalls: op.calls.failedCalls,
+          successRate: op.calls.totalCalls > 0 ? (op.calls.successfulCalls / op.calls.totalCalls) * 100 : 0,
+          totalEffectiveMinutes,
+          averageMinutesPerCall,
+          averageCallsPerBeneficiary,
+          beneficiariesWithCalls: op.calls.uniqueBeneficiariesContacted,
+          allCallsData: [],
+        };
+      })
+      .sort((a, b) => b.totalCalls - a.totalCalls);
   };
 
   const operatorCallMetrics = getOperatorCallMetrics();

@@ -2,6 +2,77 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { userManagementService } from '../services/userManagementService';
 
+// Flag global para evitar loops de carga
+let isLoadingUsers = false;
+
+const normalizeEmailKey = (user = {}) => (user.emailNormalized || user.email || '').toLowerCase().trim();
+
+const toMillis = (value) => {
+  if (!value) return 0;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (value.seconds) return value.seconds * 1000;
+  const d = new Date(value);
+  return isNaN(d) ? 0 : d.getTime();
+};
+
+const pickBestProfile = (profiles = []) => {
+  return profiles.reduce((best, current) => {
+    if (!best) return current;
+
+    const bestActive = best.isActive !== false;
+    const currentActive = current.isActive !== false;
+
+    if (currentActive !== bestActive) {
+      return currentActive ? current : best;
+    }
+
+    const bestTime = toMillis(best.updatedAt || best.createdAt);
+    const currentTime = toMillis(current.updatedAt || current.createdAt);
+
+    return currentTime > bestTime ? current : best;
+  }, null);
+};
+
+const deduplicateProfiles = (profiles = []) => {
+  const grouped = profiles.reduce((acc, profile) => {
+    const key = normalizeEmailKey(profile);
+    if (!key) return acc;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(profile);
+    return acc;
+  }, {});
+
+  const deduped = Object.values(grouped).map(pickBestProfile).filter(Boolean);
+  return deduped;
+};
+
+// Comparar listas por identidad (email normalizado) y estado activo
+const areUserListsEqualByIdentity = (a = [], b = []) => {
+  if (a.length !== b.length) return false;
+
+  const mapFrom = (list) => {
+    const m = new Map();
+    list.forEach(user => {
+      const key = normalizeEmailKey(user);
+      if (!key) return;
+      m.set(key, user.isActive !== false);
+    });
+    return m;
+  };
+
+  const mapA = mapFrom(a);
+  const mapB = mapFrom(b);
+
+  if (mapA.size !== mapB.size) return false;
+
+  for (const [key, isActive] of mapA.entries()) {
+    if (!mapB.has(key)) return false;
+    if (mapB.get(key) !== isActive) return false;
+  }
+
+  return true;
+};
+
 /**
  * Store para gestión de usuarios, roles y permisos
  * Solo accesible por super usuarios
@@ -15,7 +86,7 @@ const useUserManagementStore = create(
         {
           id: 'super_admin',
           name: 'Super Administrador',
-          description: 'Acceso completo al sistema',
+          description: 'Acceso total al sistema',
           permissions: ['all'],
           level: 100,
           color: 'purple'
@@ -48,6 +119,7 @@ const useUserManagementStore = create(
       
       // Estados de UI
       isLoading: false,
+      isLoaded: false,
       selectedUser: null,
       searchTerm: '',
       filterRole: 'all',
@@ -61,22 +133,35 @@ const useUserManagementStore = create(
 
       // Acciones - Gestión de usuarios
       setUsers: (users) => {
-        const stats = get().calculateStats(users);
-        set({ users: users || [], stats });
+        const activeUsers = (users || []).filter(user => user.isActive !== false);
+        const deduped = deduplicateProfiles(activeUsers);
+
+        // Evitar loops: no escribir si no hay cambios relevantes
+        if (areUserListsEqualByIdentity(get().users, deduped)) {
+          return;
+        }
+
+        const stats = get().calculateStats(deduped);
+        set({ users: deduped, stats });
       },
 
       loadUsers: async () => {
-        console.log('🔄 Store: Iniciando carga de usuarios...');
+        if (isLoadingUsers || get().isLoaded) {
+          return;
+        }
+
+        isLoadingUsers = true;
         set({ isLoading: true });
+
         try {
-          console.log('🔄 Store: Llamando al servicio...');
           const users = await userManagementService.getAllUsers();
-          console.log('🔄 Store: Usuarios recibidos del servicio:', users.length);
-          get().setUsers(users);
-          console.log('🔄 Store: Usuarios guardados en el estado');
+          const dedupedUsers = deduplicateProfiles(users);
+          get().setUsers(dedupedUsers);
+          set({ isLoaded: true });
         } catch (error) {
-          console.error('❌ Store: Error cargando usuarios:', error);
+          console.error('[UserStore] loadUsers failed', error);
         } finally {
+          isLoadingUsers = false;
           set({ isLoading: false });
         }
       },
@@ -85,8 +170,11 @@ const useUserManagementStore = create(
         try {
           const newUser = await userManagementService.createUser(userData);
           set(state => ({
-            users: [...state.users, newUser],
-            stats: get().calculateStats([...state.users, newUser])
+            users: (() => {
+              const deduped = deduplicateProfiles([...state.users, newUser]);
+              return deduped;
+            })(),
+            stats: get().calculateStats(deduplicateProfiles([...state.users, newUser]))
           }));
           return newUser;
         } catch (error) {
@@ -113,9 +201,10 @@ const useUserManagementStore = create(
             const updatedUsers = state.users.map(user => 
               user.id === userId ? { ...user, ...updateData } : user
             );
+            const deduped = deduplicateProfiles(updatedUsers);
             return {
-              users: updatedUsers,
-              stats: get().calculateStats(updatedUsers)
+              users: deduped,
+              stats: get().calculateStats(deduped)
             };
           });
           
@@ -144,9 +233,13 @@ const useUserManagementStore = create(
 
       deleteUser: async (userId) => {
         try {
-          await userManagementService.deleteUser(userId);
+          const target = get().users.find(u => u.id === userId);
+          const emailKey = normalizeEmailKey(target || {});
+
+          await userManagementService.deactivateUserByEmail(emailKey);
+
           set(state => {
-            const filteredUsers = state.users.filter(user => user.id !== userId);
+            const filteredUsers = state.users.filter(user => normalizeEmailKey(user) !== emailKey && user.id !== userId);
             return {
               users: filteredUsers,
               stats: get().calculateStats(filteredUsers)
@@ -267,7 +360,8 @@ const useUserManagementStore = create(
           selectedUser: null,
           searchTerm: '',
           filterRole: 'all',
-          isLoading: false
+          isLoading: false,
+          isLoaded: false
         });
       }
     }),

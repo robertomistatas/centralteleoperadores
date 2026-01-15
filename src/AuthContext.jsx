@@ -76,24 +76,7 @@ export const AuthProvider = ({ children }) => {
       if (user) {
         console.log('👤 Usuario autenticado:', user.email);
         
-        // ⭐ AUTO-SYNC: Verificar y sincronizar automáticamente UIDs sintéticos
-        try {
-          const wasSynced = await autoSyncService.checkAndSync(user);
-          
-          if (wasSynced) {
-            console.log('🔄 Usuario sincronizado automáticamente');
-            // Opcional: Mostrar notificación al usuario
-            window.dispatchEvent(new CustomEvent('showNotification', {
-              detail: {
-                type: 'success',
-                message: 'Tu perfil ha sido actualizado automáticamente'
-              }
-            }));
-          }
-        } catch (error) {
-          console.error('❌ Error en auto-sync:', error);
-          // No bloquear el login si falla el sync
-        }
+        // Auto-sync deshabilitado para evitar creación implícita; sincronización será manual
       }
       
       setUser(user);

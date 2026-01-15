@@ -18,39 +18,85 @@
 import logger from './logger.js';
 import { normalizeOperatorFields } from './operatorHelpers.js';
 
-/**
- * Limpia y normaliza números telefónicos
- * Elimina espacios, guiones, paréntesis, comillas y prefijos internacionales
- * 
- * ⭐ RC1: Maneja comillas simples de Excel ('099353003)
- * 
- * @param {string} phone - Número telefónico sin normalizar
- * @returns {string} Número limpio (solo dígitos)
- */
-export const cleanPhone = (phone = '') => {
-  if (!phone || typeof phone !== 'string') return '';
-  
-  // ⭐ RC1: Eliminar comillas simples de Excel
-  let cleaned = phone.replace(/^'/, '');
-  
-  // Eliminar espacios, guiones, paréntesis, puntos
-  cleaned = cleaned.replace(/[\s\-().\[\]]/g, '');
-  
-  // Eliminar prefijos internacionales comunes (+56, 56, +569)
-  cleaned = cleaned.replace(/^\+?56/, '');
-  
-  // Si tiene 9 dígitos y empieza con 9, es válido
-  if (cleaned.length === 9 && cleaned.startsWith('9')) {
-    return cleaned;
+const isDevEnv = (
+  (typeof import.meta !== 'undefined' && import.meta.env?.DEV) ||
+  (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development')
+);
+
+const debugNormalizerFlag = (
+  (typeof process !== 'undefined' && process.env?.DEBUG_NORMALIZER === 'true') ||
+  (typeof window !== 'undefined' && window.DEBUG_NORMALIZER === true)
+);
+
+const shouldLogNormalizer = isDevEnv && debugNormalizerFlag;
+
+const logNormalizerInfo = (...args) => {
+  if (shouldLogNormalizer) {
+    logger.info(...args);
   }
-  
-  // Si tiene 8 dígitos, agregar 9 al inicio (formato chileno)
-  if (cleaned.length === 8) {
-    return '9' + cleaned;
-  }
-  
-  return cleaned;
 };
+
+/**
+ * Canon telefónico Chile (celular): 9 dígitos, inicia con '9'.
+ * Limpia prefijos internacionales, espacios, signos y notación científica.
+ * Ejemplos: +56983562700 → 983562700 ; 9.86047099E8 → 986047099
+ */
+export const normalizePhoneCL = (phone = '') => {
+  if (phone === null || phone === undefined) return '';
+
+  const toDigits = (value) => {
+    // Manejar números en notación científica o tipo number
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value)) return '';
+      const asString = value.toString();
+      if (/e/i.test(asString)) {
+        const asInt = Math.round(Number(value));
+        return String(asInt);
+      }
+      return asString;
+    }
+
+    const str = String(value).trim();
+    if (/^[-+]?\d+(?:\.\d+)?e[-+]?\d+$/i.test(str)) {
+      const asInt = Math.round(Number(str));
+      return Number.isFinite(asInt) ? String(asInt) : '';
+    }
+    return str.replace(/[^0-9]/g, '');
+  };
+
+  let digits = toDigits(phone);
+  if (!digits) return '';
+
+  // Eliminar prefijos 56 / +56 / 569 / 56 9
+  if (digits.startsWith('56') && digits.length > 9) {
+    digits = digits.slice(2);
+  }
+
+  // Si aún queda prefijo 9 extra (569xxxxxxx → 9xxxxxxx)
+  if (digits.length === 10 && digits.startsWith('56')) {
+    digits = digits.slice(2);
+  }
+
+  // Si hay más de 9 dígitos, quedarnos con los últimos 9 (evita anexos)
+  if (digits.length > 9) {
+    digits = digits.slice(-9);
+  }
+
+  // Si tiene 8 dígitos, asumir celular y anteponer 9
+  if (digits.length === 8) {
+    digits = '9' + digits;
+  }
+
+  // Validar canon final: 9 dígitos iniciando en 9
+  if (digits.length === 9 && digits.startsWith('9')) {
+    return digits;
+  }
+
+  return '';
+};
+
+// Alias histórico para compatibilidad
+export const cleanPhone = normalizePhoneCL;
 
 /**
  * Normaliza datos de operador/teleoperadora
@@ -222,7 +268,7 @@ export const isValidCall = (record = {}) => {
   
   // ⭐ POLÍTICA 1: Llamada entrante siempre es válida
   if (normalizedDirection === 'entrante') {
-    logger.info('[DataNormalizer] Seguimiento válido por llamada ENTRANTE', {
+    logNormalizerInfo('[DataNormalizer] Seguimiento válido por llamada ENTRANTE', {
       beneficiary: record.beneficiaryName,
       direction: normalizedDirection,
       resultado
@@ -391,7 +437,7 @@ export const normalizeRecords = (records = []) => {
     .map(record => normalizeRecord(record))
     .filter(record => record !== null);
   
-  logger.info('[DataNormalizer] Registros normalizados', {
+  logNormalizerInfo('[DataNormalizer] Registros normalizados', {
     original: records.length,
     normalized: normalized.length
   });
@@ -510,6 +556,7 @@ export const getValidFollowups = (records = []) => {
 
 // Exportación por defecto
 export default {
+  normalizePhoneCL,
   cleanPhone,
   normalizeOperator,
   normalizeBeneficiary,

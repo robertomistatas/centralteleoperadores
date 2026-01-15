@@ -78,18 +78,52 @@ const handleFirestoreError = (error, operation) => {
   throw error; // Lanzar el error para que sea capturado en el catch
 };
 
+// Estado de disponibilidad para operaciones de escritura
+export const isFirestoreReady = () => {
+  const userId = getCurrentUserId();
+  return !permissionErrorsByUser.get(userId);
+};
+
+export const assertFirestoreReady = (operation = 'realizar la operación') => {
+  if (!isFirestoreReady()) {
+    const err = new Error('Firestore no está configurado o no tiene permisos. No se puede ' + operation + '.');
+    err.code = 'firestore-not-ready';
+    throw err;
+  }
+};
+
 // Servicio para Operadores
 export const operatorService = {
   // Crear operador
-  async create(userId, operatorData) {
+  async create(userId, operatorData, options = {}) {
     try {
-      const docRef = await addDoc(collection(db, COLLECTIONS.OPERATORS), {
+      assertFirestoreReady('crear operador');
+
+      if (!operatorData?.email) {
+        throw new Error('operatorData.email es requerido para crear operador');
+      }
+
+      const payload = {
         ...operatorData,
         userId,
+        emailNormalized: operatorData.email?.toLowerCase?.().trim?.() || operatorData.email,
+        isActive: operatorData.isActive !== false,
         createdAt: new Date(),
         updatedAt: new Date()
-      });
-      return { id: docRef.id, ...operatorData };
+      };
+
+      if (!payload.emailNormalized) {
+        throw new Error('operatorId/emailNormalized inválido. No se puede crear operador.');
+      }
+
+      if (options.id) {
+        const opId = options.id;
+        await setDoc(doc(db, COLLECTIONS.OPERATORS, opId), payload, { merge: true });
+        return { id: opId, ...payload };
+      }
+
+      const docRef = await addDoc(collection(db, COLLECTIONS.OPERATORS), payload);
+      return { id: docRef.id, ...payload };
     } catch (error) {
       return handleFirestoreError(error, 'crear operador');
     }
@@ -170,6 +204,12 @@ export const operatorService = {
   // Actualizar operador
   async update(operatorId, data) {
     try {
+      assertFirestoreReady('actualizar operador');
+
+      if (!operatorId) {
+        throw new Error('operatorId requerido para actualizar operador');
+      }
+
       const operatorRef = doc(db, COLLECTIONS.OPERATORS, operatorId);
       await updateDoc(operatorRef, {
         ...data,
@@ -184,6 +224,12 @@ export const operatorService = {
   // Eliminar operador
   async delete(operatorId) {
     try {
+      assertFirestoreReady('eliminar operador');
+
+      if (!operatorId) {
+        throw new Error('operatorId requerido para eliminar operador');
+      }
+
       console.log('🗑️ Eliminando operador de Firestore:', operatorId);
       await deleteDoc(doc(db, COLLECTIONS.OPERATORS, operatorId));
       console.log('✅ Operador eliminado exitosamente de Firestore');
@@ -204,7 +250,14 @@ export const operatorService = {
     
     try {
       console.log('📥 Obteniendo todos los operadores desde Firebase...');
-      const querySnapshot = await getDocs(collection(db, COLLECTIONS.OPERATORS));
+      let querySnapshot;
+      try {
+        const q = query(collection(db, COLLECTIONS.OPERATORS), where('isActive', '==', true));
+        querySnapshot = await getDocs(q);
+      } catch (err) {
+        console.warn('⚠️ getAll operators (activos) falló, usando fallback completo:', err?.message);
+        querySnapshot = await getDocs(collection(db, COLLECTIONS.OPERATORS));
+      }
       
       const operators = querySnapshot.docs.map(doc => ({
         id: doc.id,
@@ -214,7 +267,9 @@ export const operatorService = {
       console.log('✅ Operadores obtenidos:', operators.length);
       
       // Ordenar por fecha de creación (más recientes primero)
-      return operators.sort((a, b) => {
+      const activeOnly = operators.filter(op => op.isActive !== false);
+
+      return activeOnly.sort((a, b) => {
         const dateA = a.createdAt?.toDate?.() || new Date(0);
         const dateB = b.createdAt?.toDate?.() || new Date(0);
         return dateB - dateA;
@@ -229,31 +284,59 @@ export const operatorService = {
 
 // Servicio para Asignaciones
 export const assignmentService = {
-  // Crear/actualizar asignaciones para un operador
+  // Crear/actualizar asignaciones para un operador (docId = operatorId)
   async saveOperatorAssignments(userId, operatorId, assignments) {
     try {
-      const docRef = doc(db, COLLECTIONS.ASSIGNMENTS, `${userId}_${operatorId}`);
+      assertFirestoreReady('guardar asignaciones');
+
+      if (!operatorId) {
+        throw new Error('operatorId requerido para guardar asignaciones');
+      }
+
+      const docRef = doc(db, COLLECTIONS.ASSIGNMENTS, operatorId);
+
       await setDoc(docRef, {
-        userId,
         operatorId,
+        ownerUserId: userId || null,
         assignments,
         updatedAt: new Date()
-      });
+      }, { merge: true });
+
+      // Limpieza opcional: eliminar documento legado `${userId}_${operatorId}` si existe
+      if (userId) {
+        const legacyRef = doc(db, COLLECTIONS.ASSIGNMENTS, `${userId}_${operatorId}`);
+        const legacySnap = await getDoc(legacyRef);
+        if (legacySnap.exists()) {
+          await deleteDoc(legacyRef);
+        }
+      }
+
       return true;
     } catch (error) {
       return handleFirestoreError(error, 'guardar asignaciones');
     }
   },
 
-  // Obtener asignaciones de un operador
+  // Obtener asignaciones de un operador (prioriza nuevo esquema assignments/{operatorId})
   async getOperatorAssignments(userId, operatorId) {
     try {
-      const docRef = doc(db, COLLECTIONS.ASSIGNMENTS, `${userId}_${operatorId}`);
-      const docSnap = await getDoc(docRef);
-      
-      if (docSnap.exists()) {
-        return docSnap.data().assignments || [];
+      // Nuevo esquema
+      const primaryRef = doc(db, COLLECTIONS.ASSIGNMENTS, operatorId);
+      const primarySnap = await getDoc(primaryRef);
+
+      if (primarySnap.exists()) {
+        return primarySnap.data().assignments || [];
       }
+
+      // Compatibilidad con esquema legado `${userId}_${operatorId}`
+      if (userId) {
+        const legacyRef = doc(db, COLLECTIONS.ASSIGNMENTS, `${userId}_${operatorId}`);
+        const legacySnap = await getDoc(legacyRef);
+        if (legacySnap.exists()) {
+          return legacySnap.data().assignments || [];
+        }
+      }
+
       return [];
     } catch (error) {
       const result = handleFirestoreError(error, 'obtener asignaciones');
@@ -261,25 +344,41 @@ export const assignmentService = {
     }
   },
 
-  // Obtener todas las asignaciones del usuario
+  // Obtener todas las asignaciones del usuario (ownerUserId) con fallback a esquema legado
   async getAllUserAssignments(userId) {
     const currentUserId = getCurrentUserId();
     if (permissionErrorsByUser.has(currentUserId)) {
-      return {}; // Retornar inmediatamente si ya sabemos que hay problemas de permisos para este usuario
+      return {};
     }
     
     try {
+      // Nuevo esquema: ownerUserId
       const q = query(
         collection(db, COLLECTIONS.ASSIGNMENTS),
-        where('userId', '==', userId)
+        where('ownerUserId', '==', userId)
       );
       const querySnapshot = await getDocs(q);
       
       const allAssignments = {};
-      querySnapshot.docs.forEach(doc => {
-        const data = doc.data();
-        allAssignments[data.operatorId] = data.assignments || [];
+      querySnapshot.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        const opId = data.operatorId || docSnap.id;
+        allAssignments[opId] = data.assignments || [];
       });
+
+      // Compatibilidad: si no hay resultados y existen documentos legados
+      if (Object.keys(allAssignments).length === 0) {
+        const legacyQuery = query(
+          collection(db, COLLECTIONS.ASSIGNMENTS),
+          where('userId', '==', userId)
+        );
+        const legacySnapshot = await getDocs(legacyQuery);
+        legacySnapshot.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          const opId = data.operatorId || docSnap.id;
+          allAssignments[opId] = data.assignments || [];
+        });
+      }
       
       return allAssignments;
     } catch (error) {
@@ -291,59 +390,39 @@ export const assignmentService = {
   // Eliminar asignaciones de un operador
   async deleteOperatorAssignments(userId, operatorId) {
     try {
-      const docId = `${userId}_${operatorId}`;
-      console.log('🗑️ Eliminando asignaciones del operador:', { 
-        userId, 
-        operatorId,
-        docId,
-        collection: COLLECTIONS.ASSIGNMENTS
-      });
-      
-      // 🔍 DEBUG: Verificar si el documento existe antes de eliminar
-      const docRef = doc(db, COLLECTIONS.ASSIGNMENTS, docId);
-      const docSnap = await getDoc(docRef);
-      
-      if (docSnap.exists()) {
-        console.log('✅ Documento encontrado, procediendo a eliminar:', {
-          docId,
-          data: docSnap.data()
-        });
-        await deleteDoc(docRef);
-        console.log('✅ Asignaciones del operador eliminadas exitosamente');
-        return true;
-      } else {
-        console.warn('⚠️ El documento NO EXISTE en Firebase:', docId);
-        console.log('🔍 Intentando buscar documentos similares...');
-        
-        // Buscar todos los documentos que contengan el operatorId
-        const allDocsSnapshot = await getDocs(collection(db, COLLECTIONS.ASSIGNMENTS));
-        const matchingDocs = [];
-        
-        allDocsSnapshot.forEach(doc => {
-          if (doc.id.includes(operatorId) || doc.data().operatorId === operatorId) {
-            matchingDocs.push({
-              id: doc.id,
-              operatorId: doc.data().operatorId,
-              userId: doc.data().userId,
-              assignmentsCount: doc.data().assignments?.length || 0
-            });
-          }
-        });
-        
-        if (matchingDocs.length > 0) {
-          console.log(`⚠️ Encontrados ${matchingDocs.length} documentos con operatorId similar:`, matchingDocs);
-          console.log('💡 TIP: El documento buscado era:', docId);
-          console.log('💡 Pero existen estos documentos:', matchingDocs.map(d => d.id));
-        } else {
-          console.log('ℹ️ No hay documentos para este operador (ya eliminado o nunca existió)');
-        }
-        
-        return true; // No es un error crítico
+      assertFirestoreReady('eliminar asignaciones');
+
+      if (!operatorId) {
+        throw new Error('operatorId requerido para eliminar asignaciones');
       }
+
+      const primaryId = operatorId;
+      const legacyId = userId ? `${userId}_${operatorId}` : null;
+
+      console.log('🗑️ Eliminando asignaciones del operador:', { operatorId, primaryId, legacyId });
+
+      // Eliminar documento principal
+      const primaryRef = doc(db, COLLECTIONS.ASSIGNMENTS, primaryId);
+      const primarySnap = await getDoc(primaryRef);
+      if (primarySnap.exists()) {
+        await deleteDoc(primaryRef);
+        console.log('✅ Asignaciones eliminadas (nuevo esquema)');
+      }
+
+      // Eliminar documento legado si existe
+      if (legacyId) {
+        const legacyRef = doc(db, COLLECTIONS.ASSIGNMENTS, legacyId);
+        const legacySnap = await getDoc(legacyRef);
+        if (legacySnap.exists()) {
+          await deleteDoc(legacyRef);
+          console.log('✅ Asignaciones legado eliminadas');
+        }
+      }
+
+      return true;
     } catch (error) {
-      // Si el documento no existe, no es un error crítico
       if (error.code === 'not-found') {
-        console.log('ℹ️ No había asignaciones para este operador (documento no existe)');
+        console.log('ℹ️ No había asignaciones para este operador');
         return true;
       }
       console.error('❌ Error eliminando asignaciones del operador:', error);
@@ -364,14 +443,15 @@ export const assignmentService = {
       const querySnapshot = await getDocs(collection(db, COLLECTIONS.ASSIGNMENTS));
       
       const allAssignments = [];
-      querySnapshot.docs.forEach(doc => {
-        const data = doc.data();
+      querySnapshot.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        const operatorId = data.operatorId || docSnap.id;
         if (data.assignments && Array.isArray(data.assignments)) {
           data.assignments.forEach(assignment => {
             allAssignments.push({
               ...assignment,
-              operatorId: data.operatorId,
-              userId: data.userId
+              operatorId,
+              userId: data.ownerUserId || data.userId || null
             });
           });
         }
@@ -414,9 +494,9 @@ export const assignmentService = {
         );
         const querySnapshot = await getDocs(q);
 
-        querySnapshot.docs.forEach(doc => {
-          const data = doc.data();
-          const operatorId = data.operatorId;
+        querySnapshot.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          const operatorId = data.operatorId || docSnap.id;
 
           if (!operatorId) {
             return;

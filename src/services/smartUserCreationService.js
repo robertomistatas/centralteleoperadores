@@ -12,9 +12,11 @@ import {
   where,
   getDocs,
   serverTimestamp,
-  onSnapshot
+  onSnapshot,
+  updateDoc
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
+import { assertFirestoreReady } from '../firestoreService';
 
 /**
  * Servicio mejorado para creación inteligente de usuarios
@@ -33,15 +35,28 @@ class SmartUserCreationService {
    */
   async createUserIntelligent(userData) {
     try {
+      assertFirestoreReady('crear usuario');
       console.log('🧠 Iniciando creación inteligente de usuario:', userData.email);
       
       const { email, displayName, role = 'teleoperadora', isActive = true } = userData;
       const normalizedEmail = email.toLowerCase().trim();
       
-      // 1. Verificar que no exista ya
-      const existingUser = await this.getUserByEmail(normalizedEmail);
-      if (existingUser) {
-        throw new Error(`Usuario con email ${normalizedEmail} ya existe`);
+      // 1. Verificar existencia y estado
+      const existence = await this.checkIfUserExistsByEmail(normalizedEmail);
+      if (existence.exists && existence.isActive) {
+        throw new Error(`Usuario con email ${normalizedEmail} ya existe y está activo`);
+      }
+
+      // 1b. Reactivar si existe inactivo
+      if (existence.exists && !existence.isActive) {
+        const reactivated = await this.reactivateUserByEmail(normalizedEmail, existence.docIds);
+        return {
+          success: true,
+          reactivated: true,
+          uid: reactivated?.id,
+          profile: reactivated,
+          message: `Usuario ${reactivated?.displayName || normalizedEmail} reactivado exitosamente`
+        };
       }
       
       // 2. Generar UID predictivo para el usuario
@@ -51,6 +66,7 @@ class SmartUserCreationService {
       const userProfile = {
         uid: predictiveUID,
         email: normalizedEmail,
+        emailNormalized: normalizedEmail,
         displayName: displayName.trim(),
         role: role,
         isActive: isActive,
@@ -63,7 +79,7 @@ class SmartUserCreationService {
         // Metadatos para sincronización inteligente
         smartSync: {
           enabled: true,
-          emailNormalized: normalizedEmail,
+            emailNormalized: normalizedEmail,
           createdViaApp: true,
           waitingForAuth: true
         }
@@ -200,9 +216,10 @@ class SmartUserCreationService {
    */
   async getUserByEmail(email) {
     try {
+      const normalizedEmail = email.toLowerCase().trim();
       const q = query(
         collection(db, this.collection), 
-        where('email', '==', email.toLowerCase().trim())
+        where('emailNormalized', '==', normalizedEmail)
       );
       
       const querySnapshot = await getDocs(q);
@@ -220,6 +237,74 @@ class SmartUserCreationService {
       console.error('Error obteniendo usuario por email:', error);
       return null;
     }
+  }
+
+  /**
+   * Verificar existencia por email normalizado
+   * Retorna estado y todos los docIds encontrados
+   */
+  async checkIfUserExistsByEmail(email) {
+    const normalizedEmail = email.toLowerCase().trim();
+    const queries = [
+      query(collection(db, this.collection), where('emailNormalized', '==', normalizedEmail)),
+      query(collection(db, this.collection), where('email', '==', normalizedEmail))
+    ];
+
+    const docsMap = new Map();
+
+    for (const q of queries) {
+      try {
+        const snap = await getDocs(q);
+        snap.forEach(d => {
+          docsMap.set(d.id, d);
+        });
+      } catch (error) {
+        console.warn('⚠️ checkIfUserExistsByEmail query falló:', error?.message);
+      }
+    }
+
+    if (docsMap.size === 0) {
+      return { exists: false, isActive: false, docIds: [] };
+    }
+
+    const docs = Array.from(docsMap.values()).map(d => d.data());
+    const hasActive = docs.some(d => d.isActive !== false);
+
+    return {
+      exists: true,
+      isActive: hasActive,
+      docIds: Array.from(docsMap.keys())
+    };
+  }
+
+  /**
+   * Reactivar perfiles inactivos por email normalizado
+   */
+  async reactivateUserByEmail(email, docIds = []) {
+    const normalizedEmail = email.toLowerCase().trim();
+
+    let targets = docIds;
+    if (!targets || targets.length === 0) {
+      const snap = await getDocs(query(collection(db, this.collection), where('emailNormalized', '==', normalizedEmail)));
+      targets = snap.docs.map(d => d.id);
+    }
+
+    if (!targets || targets.length === 0) {
+      throw new Error('No se encontraron perfiles para reactivar');
+    }
+
+    const timestamp = serverTimestamp();
+    const updates = targets.map(id => updateDoc(doc(db, this.collection, id), {
+      isActive: true,
+      deletedAt: null,
+      updatedAt: timestamp,
+      emailNormalized: normalizedEmail
+    }));
+
+    await Promise.all(updates);
+
+    const firstDoc = await getDoc(doc(db, this.collection, targets[0]));
+    return firstDoc.exists() ? { id: firstDoc.id, ...firstDoc.data(), isActive: true, deletedAt: null } : null;
   }
   
   /**

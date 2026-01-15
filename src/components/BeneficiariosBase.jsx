@@ -23,6 +23,7 @@ import { useAppStore } from '../stores';
 import { isAdminUser } from '../utils/adminConfig';
 import { initializeBeneficiaryStore } from '../utils/beneficiaryStoreInit';
 import { debugBeneficiaryMatch, auditBeneficiaryAssignments } from '../utils/debugBeneficiaryMatch';
+import logger from '../utils/logger';
 import ExcelUpload from '../components/beneficiaries/ExcelUpload';
 import BeneficiaryList from '../components/beneficiaries/BeneficiaryList';
 import UnassignedBeneficiaries from '../components/beneficiaries/UnassignedBeneficiaries';
@@ -72,7 +73,7 @@ const BeneficiariosBase = () => {
         try {
           await initializeBeneficiaryStore(user.uid);
         } catch (error) {
-          console.error('Error inicializando store:', error);
+          logger.error('[BeneficiariosBase] Error inicializando store', error);
           showNotification('❌ Error cargando beneficiarios', 'error');
         }
       }
@@ -85,7 +86,7 @@ const BeneficiariosBase = () => {
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     if (beneficiaries.length > 0 && !isLoading) {
-      console.log('📊 Beneficiarios Base cargados:', {
+      logger.debug('[BeneficiariosBase] Beneficiarios Base cargados', {
         total: beneficiaries.length,
         stats: stats
       });
@@ -95,7 +96,7 @@ const BeneficiariosBase = () => {
   // Debug: Verificar permisos de usuario (solo en dev)
   useEffect(() => {
     if (import.meta.env.DEV) {
-      console.log('👤 Usuario actual:', {
+      logger.debug('[BeneficiariosBase] Usuario actual', {
         email: user?.email,
         isAdmin: isAdminUser(user),
         user: user
@@ -113,7 +114,9 @@ const BeneficiariosBase = () => {
     const allAssignments = getAllAssignments();
     const unassigned = findUnassignedBeneficiaries(allAssignments);
     setUnassignedBeneficiaries(unassigned);
-    console.log('🔄 Unassigned actualizados:', unassigned.length);
+    if (import.meta.env.DEV) {
+      logger.debug('[BeneficiariosBase] Unassigned actualizados', { count: unassigned.length });
+    }
   }, [operatorAssignments, beneficiaries, findUnassignedBeneficiaries, getAllAssignments]);
 
   // Mostrar notificaciones
@@ -125,10 +128,10 @@ const BeneficiariosBase = () => {
   // CORRECCIÓN: Sincronización manual usando getAllAssignments()
   const handleSyncWithAssignments = async () => {
     try {
-      console.log('🔄 Sincronizando con módulo de asignaciones...');
+      if (import.meta.env.DEV) logger.debug('[BeneficiariosBase] Sincronizando con módulo de asignaciones');
       
       const allAssignments = getAllAssignments();
-      console.log('🔍 Asignaciones obtenidas:', allAssignments);
+      if (import.meta.env.DEV) logger.debug('[BeneficiariosBase] Asignaciones obtenidas', { count: allAssignments.length });
       
       if (allAssignments.length === 0) {
         showNotification('⚠️ No se encontraron asignaciones para sincronizar', 'warning');
@@ -145,7 +148,7 @@ const BeneficiariosBase = () => {
       );
       
     } catch (error) {
-      console.error('Error en sincronización:', error);
+      logger.error('[BeneficiariosBase] Error en sincronización', error);
       showNotification('❌ Error al sincronizar con asignaciones', 'error');
     }
   };
@@ -153,25 +156,27 @@ const BeneficiariosBase = () => {
   // Función de debugging para casos específicos
   const handleDebugSpecific = () => {
     if (!showDebugActions) return;
-    const beneficiaryName = prompt('Ingresa el nombre del beneficiario a debuggear (ej: "Mariana Apolonia Gonzalez Gonzalez"):');
+    const beneficiaryName = prompt('Ingresa el nombre del beneficiario a debuggear (ej: "Juan Pérez"):');
     if (!beneficiaryName) return;
     
     const allAssignments = getAllAssignments();
-    console.log('🔍 DEBUG ESPECÍFICO:', beneficiaryName);
-    console.log('📋 Total asignaciones disponibles:', allAssignments.length);
-    console.log('📋 Muestra de asignaciones:', allAssignments.slice(0, 5));
+    logger.debug('[BeneficiariosBase] DEBUG ESPECÍFICO', {
+      beneficiaryName,
+      assignmentsTotal: allAssignments.length,
+      assignmentsSample: allAssignments.slice(0, 5),
+    });
     
     // Buscar en beneficiarios
     const beneficiaryMatch = beneficiaries.find(b => 
       b.nombre?.toLowerCase().includes(beneficiaryName.toLowerCase())
     );
-    console.log('👤 Beneficiario encontrado en base:', beneficiaryMatch);
+    logger.debug('[BeneficiariosBase] Beneficiario encontrado en base', { found: Boolean(beneficiaryMatch), beneficiaryMatch });
     
     // Buscar en asignaciones
     const assignmentMatch = allAssignments.find(a => 
       a.beneficiary?.toLowerCase().includes(beneficiaryName.toLowerCase())
     );
-    console.log('📝 Asignación encontrada:', assignmentMatch);
+    logger.debug('[BeneficiariosBase] Asignación encontrada', { found: Boolean(assignmentMatch), assignmentMatch });
     
     // Usar función de debugging existente
     const result = debugBeneficiaryMatch(beneficiaryName, beneficiaries, allAssignments);
@@ -187,21 +192,22 @@ const BeneficiariosBase = () => {
   // Nueva función de debugging completo del módulo
   const handleDebugModule = () => {
     if (!showDebugActions) return;
-    console.group('🔍 DIAGNÓSTICO COMPLETO - MÓDULO BENEFICIARIOS BASE');
+    logger.group('🔍 DIAGNÓSTICO COMPLETO - MÓDULO BENEFICIARIOS BASE');
     
     const allAssignments = getAllAssignments();
     const unassigned = findUnassignedBeneficiaries(allAssignments);
     setUnassignedBeneficiaries(unassigned);
     
-    console.log('📊 RESUMEN GENERAL:');
-    console.log('- Total beneficiarios:', beneficiaries.length);
-    console.log('- Total asignaciones:', allAssignments.length);
-    console.log('- Beneficiarios sin asignar:', unassigned.length);
-    console.log('- Diferencia esperada:', beneficiaries.length - allAssignments.length);
+    logger.info('[BeneficiariosBase] RESUMEN GENERAL', {
+      totalBeneficiarios: beneficiaries.length,
+      totalAsignaciones: allAssignments.length,
+      beneficiariosSinAsignar: unassigned.length,
+      diferenciaEsperada: beneficiaries.length - allAssignments.length,
+    });
     
-    console.log('📋 FORMATO DE ASIGNACIONES (primeras 3):');
+    logger.debug('[BeneficiariosBase] FORMATO DE ASIGNACIONES (primeras 3)');
     allAssignments.slice(0, 3).forEach((assignment, i) => {
-      console.log(`${i + 1}.`, {
+      logger.debug(`[BeneficiariosBase] Asignación ${i + 1}`, {
         beneficiary: assignment.beneficiary,
         operator: assignment.operator,
         operatorName: assignment.operatorName,
@@ -209,36 +215,16 @@ const BeneficiariosBase = () => {
       });
     });
     
-    console.log('👥 FORMATO DE BENEFICIARIOS (primeros 3):');
+    logger.debug('[BeneficiariosBase] FORMATO DE BENEFICIARIOS (primeros 3)');
     beneficiaries.slice(0, 3).forEach((beneficiary, i) => {
-      console.log(`${i + 1}.`, {
+      logger.debug(`[BeneficiariosBase] Beneficiario ${i + 1}`, {
         nombre: beneficiary.nombre,
         fono: beneficiary.fono,
         sim: beneficiary.sim
       });
     });
-    
-    // Caso específico: Mariana Apolonia
-    const marianaInBeneficiaries = beneficiaries.find(b => 
-      b.nombre?.toLowerCase().includes('mariana apolonia')
-    );
-    const marianaInAssignments = allAssignments.find(a => 
-      a.beneficiary?.toLowerCase().includes('mariana apolonia')
-    );
-    
-    console.log('🎯 CASO ESPECÍFICO - Mariana Apolonia:');
-    console.log('- En beneficiarios:', marianaInBeneficiaries ? 'SÍ' : 'NO');
-    console.log('- En asignaciones:', marianaInAssignments ? 'SÍ' : 'NO');
-    
-    if (marianaInBeneficiaries) {
-      console.log('👤 Datos de Mariana en beneficiarios:', marianaInBeneficiaries);
-    }
-    
-    if (marianaInAssignments) {
-      console.log('📝 Datos de Mariana en asignaciones:', marianaInAssignments);
-    }
-    
-    console.groupEnd();
+
+    logger.groupEnd();
     
     showNotification(
       `🔍 Diagnóstico completado. Ver consola para detalles. ${allAssignments.length} asignaciones, ${unassigned.length} sin asignar`,
@@ -249,13 +235,12 @@ const BeneficiariosBase = () => {
   // Manejar upload de Excel
   const handleUploadComplete = async (data, metadata) => {
     try {
-      console.log('📤 UPLOAD EXCEL - Iniciando...');
-      console.log(`📊 Registros en Excel: ${data.length}`);
+      logger.info('[BeneficiariosBase] UPLOAD EXCEL - Iniciando', { records: data.length });
       
       const result = await uploadBeneficiaries(data, user.uid, {
         replaceAll: true,
         onProgress: (progress) => {
-          console.log('📊 Progreso:', progress);
+          if (import.meta.env.DEV) logger.debug('[BeneficiariosBase] Upload progreso', progress);
           if (metadata?.onProgress) {
             metadata.onProgress(progress.processed || 0);
           }
@@ -272,11 +257,11 @@ const BeneficiariosBase = () => {
       const errorPart = result.errors > 0 ? ` (${result.errors} errores encontrados)` : '';
 
       showNotification(message + errorPart, 'success');
-      console.log('✅ UPLOAD COMPLETADO:', result);
+      logger.info('[BeneficiariosBase] UPLOAD COMPLETADO', result);
       setShowUploadModal(false);
       
     } catch (error) {
-      console.error('❌ Error en upload:', error);
+      logger.error('[BeneficiariosBase] Error en upload', error);
       showNotification(`❌ Error: ${error.message}`, 'error');
     }
   };
@@ -284,7 +269,7 @@ const BeneficiariosBase = () => {
   // Manejar edición de beneficiario
   const handleEditBeneficiary = (beneficiary) => {
     // TODO: Implementar modal de edición
-    console.log('Editar beneficiario:', beneficiary);
+    if (import.meta.env.DEV) logger.debug('[BeneficiariosBase] Editar beneficiario', beneficiary);
   };
 
   // Manejar eliminación de beneficiario
@@ -306,7 +291,7 @@ const BeneficiariosBase = () => {
   // Manejar asignación de teleoperadora
   const handleAssignOperator = (beneficiary) => {
     // CORRECCIÓN: Integrar con módulo de asignaciones usando datos reales
-    console.log('Asignar teleoperadora a:', beneficiary);
+    if (import.meta.env.DEV) logger.debug('[BeneficiariosBase] Asignar teleoperadora a', beneficiary);
     showNotification(`TODO: Implementar asignación para ${beneficiary.nombre}`, 'info');
   };
 

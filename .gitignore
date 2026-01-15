@@ -24,6 +24,12 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Local snapshots / debug artifacts (may include PII)
+snapshots/
+data/*.xlsx
+logs/
+migration.log
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

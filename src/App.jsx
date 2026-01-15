@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Phone, Users, Clock, TrendingUp, TrendingDown, Upload, Search, Filter, BarChart3, PieChart, Calendar, AlertCircle, Plus, Edit, Trash2, UserPlus, FileSpreadsheet, Save, X, LogOut, User, Zap, Database, Activity, Settings, GitCompare, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useAuth } from './AuthContext';
@@ -23,6 +23,8 @@ import usePermissions from './hooks/usePermissions';
 import { useUserSync } from './hooks/useUserSync';
 import { syncKarolAutomatically } from './services/syncKarol'; // ⭐ NUEVO
 import { initRealtimeSync, stopRealtimeSync } from './services/realtimeSync'; // ⭐ FASE 4: Realtime Sync
+import userService from './services/userService';
+import { buildCanonicalAssignmentsSnapshot } from './services/assignmentsSnapshot';
 
 const TeleasistenciaApp = () => {
   const { user, logout } = useAuth();
@@ -152,6 +154,39 @@ const TeleasistenciaApp = () => {
   const [operatorAssignments, setOperatorAssignments] = useState({});
   const [uploadingFor, setUploadingFor] = useState(null);
   const [syncingProfiles, setSyncingProfiles] = useState(false); // ⭐ Estado para sincronización de perfiles
+  const [showBeneficiarySearch, setShowBeneficiarySearch] = useState(false);
+  const [beneficiarySearchTerm, setBeneficiarySearchTerm] = useState('');
+  const [beneficiarySearchResults, setBeneficiarySearchResults] = useState([]);
+  const searchInputRef = useRef(null);
+
+  // Snapshot canónica de asignaciones (pura, sin normalización en App.jsx)
+  const assignmentsSnapshot = useMemo(
+    () => {
+      const hasOperators = Array.isArray(operators) && operators.length > 0;
+      const hasAssignments = operatorAssignments && Object.keys(operatorAssignments).length > 0;
+
+      if (!hasOperators || !hasAssignments) {
+        return {
+          operators: operators || [],
+          assignmentsByOperatorId: {},
+          totalOperators: operators?.length || 0,
+          totalBeneficiaries: 0,
+          operatorsWithAssignments: 0
+        };
+      }
+
+      return buildCanonicalAssignmentsSnapshot({
+        operators,
+        assignments: operatorAssignments
+      });
+    },
+    [operators, operatorAssignments]
+  );
+
+  const canonicalOperators = assignmentsSnapshot.operators;
+  const canonicalAssignments = assignmentsSnapshot.assignmentsByOperatorId;
+  const totalCanonicalAssignments = assignmentsSnapshot.totalBeneficiaries;
+  const operatorsWithAssignmentsCount = assignmentsSnapshot.operatorsWithAssignments;
   
   // 🔥 SINCRONIZACIÓN AUTOMÁTICA: Sincronizar estado local con Zustand cada vez que cambie
   useEffect(() => {
@@ -170,12 +205,6 @@ const TeleasistenciaApp = () => {
     }
   }, [Object.keys(operatorAssignments).length]); // ✅ FIX: Solo operatorAssignments
   
-  // Estados para búsqueda de beneficiarios
-  const [showBeneficiarySearch, setShowBeneficiarySearch] = useState(false);
-  const [beneficiarySearchTerm, setBeneficiarySearchTerm] = useState('');
-  const [beneficiarySearchResults, setBeneficiarySearchResults] = useState([]);
-  const searchInputRef = useRef(null); // ✅ Ref para mantener foco
-
   // Datos de ejemplo para las asignaciones
   const sampleAssignments = [
     { id: 1, operator: 'María González', beneficiary: 'Juan Pérez', phone: '987654321', commune: 'Santiago' },
@@ -259,62 +288,6 @@ const TeleasistenciaApp = () => {
       }
     }
   }, [isSuperAdmin, user, userProfile]);
-
-  // ⚡ FASE 4 - TAREA 5: Validación automática de consistencia (Super Admin only)
-  useEffect(() => {
-    if (!isSuperAdmin || !user || !userProfile) return;
-
-    logger.audit('[App] Inicializando validación automática de consistencia');
-
-    // Ejecutar validación inicial después de 5 segundos (dar tiempo a cargar datos)
-    const initialTimeout = setTimeout(async () => {
-      try {
-        const { runConsistencyTest } = await import('./tests/consistencyTest.js');
-        const stores = {
-          callStore: useCallStore,
-          seguimientosStore: useSeguimientosStore
-        };
-        const report = runConsistencyTest(stores);
-        
-        if (!report.withinTolerance) {
-          console.warn('⚠️ ALERTA: Inconsistencias detectadas en validación inicial');
-          showError(`Inconsistencias detectadas: ${report.maxDifference} diferencia máxima`);
-        } else {
-          console.log('✅ Validación inicial exitosa - Métricas consistentes');
-        }
-      } catch (error) {
-        logger.error('[App] Error en validación inicial:', error);
-      }
-    }, 5000);
-
-    // Validación periódica cada 60 segundos
-    const validationInterval = setInterval(async () => {
-      try {
-        const { runConsistencyTest } = await import('./tests/consistencyTest.js');
-        const stores = {
-          callStore: useCallStore,
-          seguimientosStore: useSeguimientosStore
-        };
-        const report = runConsistencyTest(stores);
-        
-        if (!report.withinTolerance) {
-          logger.warn('[App] Inconsistencias detectadas en validación periódica', {
-            maxDiff: report.maxDifference,
-            status: report.globalStatus
-          });
-        }
-      } catch (error) {
-        logger.error('[App] Error en validación periódica:', error);
-      }
-    }, 60000); // 60 segundos
-
-    // Cleanup
-    return () => {
-      clearTimeout(initialTimeout);
-      clearInterval(validationInterval);
-      logger.audit('[App] Deteniendo validación automática de consistencia');
-    };
-  }, [isSuperAdmin, user, userProfile, showError]);
 
   useEffect(() => {
     if (user && userProfile && !dataLoaded && !loadingRef.current) {
@@ -1354,57 +1327,32 @@ const TeleasistenciaApp = () => {
 
     console.log('🔍 Iniciando búsqueda para:', searchTerm);
     const allAssignments = [];
-    
-    // 1. Buscar en asignaciones locales (operatorAssignments) - FUENTE PRINCIPAL
-    Object.entries(operatorAssignments).forEach(([operatorId, assignments]) => {
-      const operator = operators.find(op => op.id === operatorId);
+    const operatorIndex = new Map((canonicalOperators || []).map((op) => [op.id, op]));
+
+    Object.entries(canonicalAssignments).forEach(([operatorId, assignments]) => {
+      const operator = operatorIndex.get(operatorId);
+      if (!operator) return;
+      const operatorName = operator.displayName || operator.name || operator.email || operator.id;
       if (assignments && Array.isArray(assignments)) {
-        assignments.forEach(assignment => {
-          // Crear una entrada unificada con todos los campos posibles
+        assignments.forEach((assignment) => {
           allAssignments.push({
-            // Campos de beneficiario
             beneficiary: assignment.beneficiary || assignment.beneficiario,
             beneficiario: assignment.beneficiary || assignment.beneficiario,
-            
-            // Campos de operador
-            operatorName: operator?.name || assignment.operator || assignment.operatorName || 'Operador no encontrado',
-            operator: operator?.name || assignment.operator || assignment.operatorName,
-            
-            // Campos de teléfono (múltiples opciones)
-            phone: assignment.primaryPhone || assignment.phone || assignment.telefono || assignment.numero_cliente || 
-                   (assignment.phones && assignment.phones[0]) || 'N/A',
+            operatorName,
+            operator: operatorName,
+            phone: assignment.primaryPhone || assignment.phone || assignment.telefono || assignment.numero_cliente || (assignment.phones && assignment.phones[0]) || 'N/A',
             primaryPhone: assignment.primaryPhone,
             phones: assignment.phones || [],
             telefono: assignment.telefono,
             numero_cliente: assignment.numero_cliente,
-            
-            // Comuna
             commune: assignment.commune || assignment.comuna || 'N/A',
             comuna: assignment.comuna,
-            
-            // Metadatos
-            operatorId: operatorId,
+            operatorId,
             source: 'operatorAssignments',
-            id: assignment.id
+            id: assignment.id,
           });
         });
       }
-    });
-    
-    // 2. Buscar en datos de Zustand como respaldo
-    const zustandAssignments = getZustandAllAssignments();
-    console.log('📊 Asignaciones de Zustand:', zustandAssignments);
-    zustandAssignments.forEach(assignment => {
-      allAssignments.push({
-        beneficiary: assignment.beneficiary || assignment.beneficiario,
-        beneficiario: assignment.beneficiary || assignment.beneficiario,
-        operatorName: assignment.operator || assignment.operatorName || assignment.name || 'Sin asignar',
-        operator: assignment.operator || assignment.operatorName || assignment.name,
-        phone: assignment.phone || assignment.telefono || assignment.numero_cliente || 'N/A',
-        commune: assignment.commune || assignment.comuna || 'N/A',
-        operatorId: assignment.operatorId || 'zustand',
-        source: 'zustand'
-      });
     });
 
     console.log('📋 Total asignaciones encontradas:', allAssignments.length);
@@ -1452,7 +1400,7 @@ const TeleasistenciaApp = () => {
     
     console.log('🎯 Resultados filtrados:', filteredResults.length);
     setBeneficiarySearchResults(filteredResults);
-  }, [operatorAssignments, operators, getZustandAllAssignments]); // ✅ FIX: Agregar dependencias
+  }, [canonicalAssignments, canonicalOperators]);
 
   // Ref para el timeout del debouncing
   const searchTimeoutRef = useRef(null);
@@ -1823,15 +1771,6 @@ const TeleasistenciaApp = () => {
           };
           localAssignments.push(assignmentData);
         });
-      } else {
-        // Solo log de errores críticos
-        if (operators.length > 0) {
-          console.warn(`⚠️ Problemas con operador ${operatorId}:`, {
-            operatorFound: !!operator,
-            assignmentsType: typeof assignments,
-            isArray: Array.isArray(assignments)
-          });
-        }
       }
     });
     
@@ -2692,7 +2631,7 @@ const TeleasistenciaApp = () => {
   );
 
   // 🔄 Componente auxiliar para renderizar operadores con sincronización ROBUSTA
-  const OperatorCard = ({ operator }) => {
+  const OperatorCard = ({ operator, assignmentsMap }) => {
     // Estado local para el perfil sincronizado
     const [syncedProfile, setSyncedProfile] = React.useState(null);
     const [profileLoading, setProfileLoading] = React.useState(false);
@@ -2810,15 +2749,17 @@ const TeleasistenciaApp = () => {
       operator.email && 
       syncedProfile.email.toLowerCase() !== operator.email.toLowerCase();
     
+    const operatorAssignmentsFor = assignmentsMap?.[operator.id] || [];
+
     return (
       <div key={operator.id} className="bg-white rounded-lg shadow-md p-6">
         <div className="flex justify-between items-start mb-4">
           <div className="flex-1">
             <div className="flex items-center gap-3 mb-2">
               <h4 className="text-lg font-semibold text-gray-900">{displayName}</h4>
-              {operatorAssignments[operator.id] && (
+              {operatorAssignmentsFor.length > 0 && (
                 <span className="bg-green-100 text-green-800 text-xs font-medium px-2 py-1 rounded-full">
-                  {operatorAssignments[operator.id].length} beneficiarios
+                  {operatorAssignmentsFor.length} beneficiarios
                 </span>
               )}
               {profileLoading && (
@@ -2849,7 +2790,7 @@ const TeleasistenciaApp = () => {
               />
             </label>
             
-            {operatorAssignments[operator.id] && (
+            {operatorAssignmentsFor.length > 0 && (
               <button
                 onClick={() => clearOperatorAssignments(operator.id)}
                 className="bg-yellow-500 text-white px-3 py-2 rounded-lg hover:bg-yellow-600 transition-colors flex items-center gap-2 text-sm"
@@ -2880,10 +2821,10 @@ const TeleasistenciaApp = () => {
         </div>
 
         {/* Mostrar asignaciones si existen */}
-        {operatorAssignments[operator.id] && operatorAssignments[operator.id].length > 0 && (
+        {operatorAssignmentsFor.length > 0 && (
           <div className="border-t pt-4">
             <h5 className="text-sm font-medium text-gray-700 mb-3">
-              Beneficiarios Asignados ({operatorAssignments[operator.id].length})
+              Beneficiarios Asignados ({operatorAssignmentsFor.length})
             </h5>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -2896,7 +2837,7 @@ const TeleasistenciaApp = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {operatorAssignments[operator.id].slice(0, 5).map((assignment) => (
+                  {operatorAssignmentsFor.slice(0, 5).map((assignment) => (
                     <tr key={assignment.id} className="border-b">
                       <td className="px-3 py-2 text-gray-900">{assignment.beneficiary}</td>
                       <td className="px-3 py-2 text-gray-900">{assignment.primaryPhone}</td>
@@ -2909,10 +2850,10 @@ const TeleasistenciaApp = () => {
                       <td className="px-3 py-2 text-gray-900">{assignment.commune}</td>
                     </tr>
                   ))}
-                  {operatorAssignments[operator.id].length > 5 && (
+                  {operatorAssignmentsFor.length > 5 && (
                     <tr>
                       <td colSpan="4" className="px-3 py-2 text-center text-gray-500 text-sm">
-                        ... y {operatorAssignments[operator.id].length - 5} beneficiarios más
+                        ... y {operatorAssignmentsFor.length - 5} beneficiarios más
                       </td>
                     </tr>
                   )}
@@ -2925,7 +2866,11 @@ const TeleasistenciaApp = () => {
     );
   };
 
-  const Assignments = () => (
+  const Assignments = () => {
+    const displayOperators = canonicalOperators || [];
+    const assignmentsByOperator = canonicalAssignments;
+
+    return (
     <div className="space-y-6">
       {/* Header con botón para crear operador */}
       <div className="bg-white rounded-lg shadow-md p-6">
@@ -2972,7 +2917,7 @@ const TeleasistenciaApp = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-600">Total Teleoperadores</p>
-                <p className="text-2xl font-bold text-blue-600">{operators.length}</p>
+                <p className="text-2xl font-bold text-blue-600">{displayOperators.length}</p>
               </div>
               <Users className="w-8 h-8 text-blue-500" />
             </div>
@@ -2981,8 +2926,8 @@ const TeleasistenciaApp = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-600">Beneficiarios Asignados</p>
-                <p className="text-2xl font-bold text-green-600">
-                  {Object.values(operatorAssignments).reduce((acc, assignments) => acc + assignments.length, 0)}
+                <p className="text-2l font-bold text-green-600">
+                  {totalCanonicalAssignments}
                 </p>
               </div>
               <Phone className="w-8 h-8 text-green-500" />
@@ -2993,7 +2938,7 @@ const TeleasistenciaApp = () => {
               <div>
                 <p className="text-sm text-gray-600">Operadores con Asignaciones</p>
                 <p className="text-2xl font-bold text-purple-600">
-                  {Object.keys(operatorAssignments).length}
+                  {operatorsWithAssignmentsCount}
                 </p>
               </div>
               <FileSpreadsheet className="w-8 h-8 text-purple-500" />
@@ -3073,7 +3018,7 @@ const TeleasistenciaApp = () => {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
                           <div className="flex items-center gap-1">
                             <Users className="w-4 h-4 text-gray-400" />
-                            <span><strong>Teleoperadora:</strong> {result.operatorName || result.operator || 'Sin asignar'}</span>
+                            <span><strong>Teleoperadora:</strong> {result.operatorName || result.operator || 'N/A'}</span>
                           </div>
                           <div className="flex items-center gap-1">
                             <Phone className="w-4 h-4 text-gray-400" />
@@ -3193,11 +3138,11 @@ const TeleasistenciaApp = () => {
 
       {/* Lista de operadores con sincronización */}
       <div className="space-y-4">
-        {operators.filter(operator => operator && operator.id).map((operator) => (
-          <OperatorCard key={operator.id} operator={operator} />
+        {displayOperators.filter(operator => operator && operator.id).map((operator) => (
+          <OperatorCard key={operator.id} operator={operator} assignmentsMap={assignmentsByOperator} />
         ))}
 
-        {operators.length === 0 && (
+        {displayOperators.length === 0 && (
           <div className="bg-white rounded-lg shadow-md p-8 text-center">
             <Users className="w-16 h-16 text-gray-400 mx-auto mb-4" />
             <h4 className="text-lg font-medium text-gray-900 mb-2">No hay teleoperadores</h4>
@@ -3213,7 +3158,8 @@ const TeleasistenciaApp = () => {
         )}
       </div>
     </div>
-  );
+    );
+  };
 
   // ✅ COMPONENTE ELIMINADO: FollowUpHistory ahora es un módulo separado
   // Ver: src/components/historial/HistorialSeguimientos.jsx

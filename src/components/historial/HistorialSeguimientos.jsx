@@ -4,8 +4,8 @@
  * Módulo profesional para visualizar el estado de los seguimientos de beneficiarios.
  * 
  * FASE 4 - TAREA 3: Integraciones Completadas
+ * - ✅ Usa métricas unificadas desde metricsService
  * - ✅ Usa dataNormalizer para limpiar y homogeneizar datos
- * - ✅ Usa metricsEngine para cálculos consistentes
  * - ✅ Corrige campos incoherentes (nombre teleoperadora, llamadas exitosas, días desde último contacto)
  * - ✅ Interfaz modernizada con Tailwind
  * 
@@ -34,14 +34,7 @@ import {
 import useCallStore from '../../stores/useCallStore';
 import { useAppStore } from '../../stores';
 import { useSeguimientosStore } from '../../stores/useSeguimientosStore';
-import { 
-  normalizeRecords, 
-  normalizeCallResult, 
-  normalizeBeneficiary, 
-  isValidCall  // ⭐ FASE 6.1: Nueva importación
-} from '../../utils/dataNormalizer';
-import { computeGlobalMetrics } from '../../services/metricsEngine';
-import { getDisplayOperatorName, isCallResult } from '../../utils/operatorHelpers';
+import { getHistorySnapshot } from '../../services/metricsService';
 import logger from '../../utils/logger';
 
 const HistorialSeguimientos = () => {
@@ -49,307 +42,37 @@ const HistorialSeguimientos = () => {
   const [searchTerm, setSearchTerm] = useState('');
 
   // ⭐ FASE 4: Obtener datos desde múltiples stores
-  const processedData = useCallStore((state) => state.processedData);
+  const callData = useCallStore((state) => state.callData);
   const getAllAssignments = useAppStore((state) => state.getAllAssignments);
   const assignments = getAllAssignments();
+  const operators = useAppStore((state) => state.operators);
   const seguimientos = useSeguimientosStore((state) => state.seguimientos);
 
   // ⭐ RC1 FIX: Logging de sincronización para debugging
   useEffect(() => {
-    logger.info('[HistorialSeguimientos] 📊 Datos actualizados', {
-      processedData: processedData?.length || 0,
-      seguimientos: seguimientos?.length || 0,
-      assignments: assignments?.length || 0,
-      timestamp: new Date().toISOString()
+    if (!import.meta.env.DEV) return;
+    logger.debug('[HistorialSeguimientos] Debug sync inputs', {
+      callDataLength: callData?.length || 0,
+      callDataSample: callData?.slice?.(0, 2) || [],
+      seguimientosLength: seguimientos?.length || 0,
+      assignmentsLength: assignments?.length || 0,
     });
-  }, [processedData, seguimientos, assignments]);
-
-  /**
-   * ⭐ FASE 4 - TAREA 3: Normalizar y consolidar datos desde todas las fuentes
-   * Usa dataNormalizer para homogeneizar campos y valores
-   */
-  const normalizedData = useMemo(() => {
-    // Combinar todas las fuentes
-    const allRecords = [
-      ...(processedData || []),
-      ...(seguimientos || [])
-    ];
-
-    if (allRecords.length === 0) {
-      logger.warn('[HistorialSeguimientos] No hay datos para normalizar');
-      return [];
-    }
-
-    // Normalizar todos los registros
-    const normalized = normalizeRecords(allRecords);
-    
-    logger.audit('[HistorialSeguimientos] Datos normalizados', {
-      registrosOriginales: allRecords.length,
-      registrosNormalizados: normalized.length,
-      beneficiariosUnicos: new Set(normalized.map(r => r.beneficiaryId || r.beneficiaryName)).size
-    });
-
-    return normalized;
-  }, [processedData, seguimientos]);
-
-  /**
-   * ⭐ FASE 4: Calcular métricas unificadas con metricsEngine
-   * Reemplaza cálculos locales por motor centralizado
-   */
-  const globalMetrics = useMemo(() => {
-    if (normalizedData.length === 0) return null;
-
+  }, [callData, seguimientos, assignments]);
+  const historySnapshot = useMemo(() => {
     try {
-      const metrics = computeGlobalMetrics(normalizedData, {
-        includeTopOperators: false,
-        calculateTrends: false
+      return getHistorySnapshot({
+        calls: callData || [],
+        seguimientos,
+        operators,
+        assignments,
       });
-
-      logger.audit('[HistorialSeguimientos] Métricas calculadas', {
-        total: metrics.total,
-        exitosas: metrics.exitosas,
-        tasaExito: metrics.tasaExito,
-        beneficiariosUnicos: metrics.beneficiariosUnicos
-      });
-
-      return metrics;
     } catch (error) {
-      logger.error('[HistorialSeguimientos] Error calculando métricas:', error);
-      return null;
+      logger.error('[HistorialSeguimientos] Error obteniendo snapshot', error);
+      return { summary: null, followUps: [] };
     }
-  }, [normalizedData]);
+  }, [callData, seguimientos, operators, assignments]);
 
-  /**
-   * ⭐ RC1 CRÍTICO: Parser de fechas UTC para evitar problemas de zona horaria
-   * Convierte string YYYY-MM-DD a Date en UTC (mediodía para evitar edge cases)
-   */
-  const parseDateUTC = (dateString) => {
-    if (!dateString) return null;
-    try {
-      const [year, month, day] = dateString.split('-').map(Number);
-      if (!year || !month || !day) return null;
-      // Usar mediodía UTC para evitar problemas de zona horaria
-      return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
-    } catch (error) {
-      logger.error('[HistorialSeguimientos] Error parseando fecha', { dateString, error });
-      return null;
-    }
-  };
-
-  /**
-   * ⭐ FASE 4 - CORRECCIÓN: Calcula el estado de seguimiento de cada beneficiario
-   * Usa datos normalizados y corrige campos incoherentes
-   */
-  const followUpData = useMemo(() => {
-    if (!normalizedData || normalizedData.length === 0) {
-      return [];
-    }
-
-    // ⭐ RC1 CRÍTICO: Usar fecha UTC a mediodía para comparaciones consistentes
-    const now = new Date();
-    const nowUTC = new Date(Date.UTC(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      12, 0, 0
-    ));
-    
-    const beneficiaryMap = new Map();
-
-    // Crear un mapa de asignaciones para lookup rápido
-    const assignmentMap = new Map();
-    if (assignments && Array.isArray(assignments)) {
-      assignments.forEach(assignment => {
-        const beneficiaryName = (assignment.beneficiary || assignment.beneficiario || '').trim().toLowerCase();
-        if (beneficiaryName) {
-          assignmentMap.set(beneficiaryName, assignment);
-        }
-      });
-    }
-
-    // ⭐ CORRECCIÓN: Procesar registros NORMALIZADOS
-    normalizedData.forEach(record => {
-      const beneficiaryName = record.beneficiaryName;
-      if (!beneficiaryName) return;
-
-      const beneficiaryKey = beneficiaryName.trim();
-      
-      if (!beneficiaryMap.has(beneficiaryKey)) {
-        beneficiaryMap.set(beneficiaryKey, {
-          beneficiary: beneficiaryName,
-          operatorName: record.operatorName, // ⭐ CORRECCIÓN: Nombre real de teleoperadora
-          calls: [],
-          successfulCalls: [],
-          lastSuccessfulCall: null,
-          lastCallDate: null,
-          lastCallResult: null,
-        });
-      }
-
-      const beneficiaryData = beneficiaryMap.get(beneficiaryKey);
-      
-      // Agregar todas las llamadas
-      beneficiaryData.calls.push(record);
-
-      // ⭐ RC1 CRÍTICO: Usar parser UTC para evitar problemas de zona horaria
-      const callDate = record.fecha ? parseDateUTC(record.fecha) : null;
-
-      // ⭐ FASE 6.1: Verificar si es seguimiento válido usando nueva lógica
-      // (salientes exitosas O entrantes)
-      const isSuccessful = isValidCall(record);
-
-      if (isSuccessful && callDate && !isNaN(callDate.getTime())) {
-        beneficiaryData.successfulCalls.push({ date: callDate, call: record });
-        
-        // Actualizar la última llamada exitosa
-        if (!beneficiaryData.lastSuccessfulCall || callDate > beneficiaryData.lastSuccessfulCall) {
-          beneficiaryData.lastSuccessfulCall = callDate;
-        }
-      }
-
-      // Actualizar la última llamada (exitosa o no)
-      if (callDate && !isNaN(callDate.getTime())) {
-        if (!beneficiaryData.lastCallDate || callDate > beneficiaryData.lastCallDate) {
-          beneficiaryData.lastCallDate = callDate;
-          beneficiaryData.lastCallResult = record.resultado || 'Sin resultado';
-        }
-      }
-
-      // ⚠️ BUGFIX: Actualizar nombre de operadora solo si es válido
-      // Guard rail: Detectar y registrar si se intenta usar un resultado como operadora
-      if (record.operatorName && !beneficiaryData.operatorName) {
-        if (isCallResult(record.operatorName)) {
-          logger.warn('[HistorialSeguimientos] ⚠️ Detectado resultado de llamada en operatorName', {
-            beneficiary: beneficiaryName,
-            operatorName: record.operatorName,
-            resultado: record.resultado,
-            rowIndex: record._rowIndex || 'unknown'
-          });
-          // NO asignar el operatorName si es un resultado
-        } else {
-          beneficiaryData.operatorName = record.operatorName;
-        }
-      }
-    });
-
-    // Generar el resultado final con clasificación
-    const result = Array.from(beneficiaryMap.values()).map(data => {
-      const assignment = assignmentMap.get(data.beneficiary.trim().toLowerCase());
-      
-      // ⚠️ BUGFIX CRÍTICO: Usar getDisplayOperatorName para obtener nombre correcto
-      // Esto evita que "Llamado exitoso" aparezca como nombre de teleoperadora
-      // PRIORIDAD: assignment.operator > data.operatorName validado
-      const operatorName = getDisplayOperatorName(
-        { 
-          assignedOperatorName: assignment?.operator || 
-                               assignment?.operatorName || 
-                               data.operatorName 
-        }, 
-        { operatorName: data.operatorName },
-        assignment
-      );
-      
-      // 🔍 AUDITORÍA: Log cuando se corrija un caso problemático
-      if (data.operatorName && isCallResult(data.operatorName)) {
-        logger.audit('[HistorialSeguimientos] ✅ Corregido resultado en operatorName', {
-          beneficiary: data.beneficiary,
-          operatorNameOriginal: data.operatorName,
-          operatorNameCorregido: operatorName
-        });
-      }
-      
-      const phone = assignment?.phone || 
-                   assignment?.telefono || 
-                   assignment?.primaryPhone || 
-                   assignment?.numero_cliente || 
-                   'N/A';
-      
-      const commune = assignment?.commune || assignment?.comuna || 'N/A';
-
-      // ⭐ RC1 CRÍTICO: Calcular días desde la última llamada exitosa
-      // PROTECCIÓN: Math.max(0, ...) evita días negativos por fechas futuras
-      let daysSinceLastSuccess = null;
-      let status = 'urgente'; // Por defecto urgente
-      let statusReason = 'Sin llamadas exitosas registradas';
-      
-      if (data.lastSuccessfulCall) {
-        const diffTime = nowUTC - data.lastSuccessfulCall;
-        // ⭐ PROTECCIÓN: Nunca mostrar días negativos
-        daysSinceLastSuccess = Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
-
-        // Logging de debugging para fechas futuras
-        if (diffTime < 0) {
-          logger.warn('[HistorialSeguimientos] ⚠️ Fecha futura detectada', {
-            beneficiario: data.beneficiary,
-            fechaLlamada: data.lastSuccessfulCall.toISOString(),
-            fechaActual: nowUTC.toISOString(),
-            diferenciaDias: Math.floor(diffTime / (1000 * 60 * 60 * 24))
-          });
-        }
-
-        // Clasificación según días desde última llamada exitosa
-        if (daysSinceLastSuccess <= 15) {
-          status = 'al-dia';
-          statusReason = `Última llamada exitosa hace ${daysSinceLastSuccess} día${daysSinceLastSuccess !== 1 ? 's' : ''}`;
-        } else if (daysSinceLastSuccess <= 30) {
-          status = 'pendiente';
-          statusReason = `Última llamada exitosa hace ${daysSinceLastSuccess} días - requiere seguimiento pronto`;
-        } else {
-          status = 'urgente';
-          statusReason = `Última llamada exitosa hace ${daysSinceLastSuccess} días - seguimiento urgente`;
-        }
-      } else if (data.lastCallDate) {
-        // Tiene llamadas pero ninguna exitosa
-        const diffTime = nowUTC - data.lastCallDate;
-        const daysSinceLastCall = Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
-        statusReason = `${data.calls.length} llamada${data.calls.length !== 1 ? 's' : ''} realizadas sin éxito. Última hace ${daysSinceLastCall} día${daysSinceLastCall !== 1 ? 's' : ''}`;
-      }
-
-      // Formatear la fecha de la última llamada
-      let lastCallFormatted = 'N/A';
-      if (data.lastSuccessfulCall) {
-        const day = data.lastSuccessfulCall.getDate().toString().padStart(2, '0');
-        const month = (data.lastSuccessfulCall.getMonth() + 1).toString().padStart(2, '0');
-        const year = data.lastSuccessfulCall.getFullYear();
-        lastCallFormatted = `${day}-${month}-${year}`;
-      } else if (data.lastCallDate) {
-        const day = data.lastCallDate.getDate().toString().padStart(2, '0');
-        const month = (data.lastCallDate.getMonth() + 1).toString().padStart(2, '0');
-        const year = data.lastCallDate.getFullYear();
-        lastCallFormatted = `${day}-${month}-${year}`;
-      }
-
-      return {
-        id: data.beneficiary,
-        beneficiary: data.beneficiary,
-        operator: operatorName, // ⭐ CORRECCIÓN: Nombre real de teleoperadora
-        phone,
-        commune,
-        status,
-        statusReason,
-        lastCall: lastCallFormatted,
-        callCount: data.calls.length, // ⭐ CORRECCIÓN: Total de llamadas
-        successfulCallCount: data.successfulCalls.length, // ⭐ CORRECCIÓN: Llamadas exitosas correctas
-        daysSinceLastCall: daysSinceLastSuccess, // ⭐ CORRECCIÓN: Días desde último contacto exitoso
-        lastCallResult: data.lastCallResult || 'Sin resultado',
-      };
-    });
-
-    // Ordenar: urgentes primero, luego pendientes, luego al día
-    result.sort((a, b) => {
-      const statusOrder = { urgente: 0, pendiente: 1, 'al-dia': 2 };
-      return statusOrder[a.status] - statusOrder[b.status];
-    });
-
-    logger.audit('[HistorialSeguimientos] Follow-up data calculado', {
-      total: result.length,
-      alDia: result.filter(r => r.status === 'al-dia').length,
-      pendientes: result.filter(r => r.status === 'pendiente').length,
-      urgentes: result.filter(r => r.status === 'urgente').length
-    });
-
-    return result;
-  }, [normalizedData, assignments]); // ⭐ CORRECCIÓN: Depender de normalizedData
+  const followUpData = historySnapshot?.followUps || [];
 
   // Filtrar datos según búsqueda y filtro de estado
   const filteredFollowUps = useMemo(() => {
@@ -363,31 +86,24 @@ const HistorialSeguimientos = () => {
     });
   }, [followUpData, filterStatus, searchTerm]);
 
-  // ⭐ FASE 4: Calcular estadísticas mejoradas con métricas unificadas
+  // ⭐ FASE 4: Calcular estadísticas usando snapshot del servicio
   const stats = useMemo(() => {
-    const baseStats = {
-      alDia: followUpData.filter(f => f.status === 'al-dia').length,
-      pendientes: followUpData.filter(f => f.status === 'pendiente').length,
-      urgentes: followUpData.filter(f => f.status === 'urgente').length,
+    const summary = historySnapshot?.summary || {};
+    return {
+      alDia: summary.dueSoon ?? followUpData.filter((f) => f.status === 'al-dia').length,
+      pendientes: summary.pending ?? followUpData.filter((f) => f.status === 'pendiente').length,
+      urgentes: summary.urgent ?? followUpData.filter((f) => f.status === 'urgente').length,
+      sinHistorial: summary.noHistory ?? followUpData.filter((f) => f.status === 'sin-historial').length,
       total: followUpData.length,
+      totalLlamadas: summary.totalCalls || 0,
+      llamadasExitosas: summary.successfulCalls || 0,
+      llamadasFallidas: summary.failedCalls || 0,
+      tasaExito: summary.successRate || 0,
+      beneficiariosUnicos: summary.uniqueBeneficiariesContacted || followUpData.length,
     };
+  }, [followUpData, historySnapshot]);
 
-    // Agregar métricas desde metricsEngine si están disponibles
-    if (globalMetrics) {
-      return {
-        ...baseStats,
-        totalLlamadas: globalMetrics.total,
-        llamadasExitosas: globalMetrics.exitosas,
-        llamadasFallidas: globalMetrics.fallidas,
-        tasaExito: globalMetrics.tasaExito,
-        beneficiariosUnicos: globalMetrics.beneficiariosUnicos
-      };
-    }
-
-    return baseStats;
-  }, [followUpData, globalMetrics]);
-
-  const hasData = normalizedData && normalizedData.length > 0;
+  const hasData = followUpData && followUpData.length > 0;
 
   return (
     <div className="space-y-6">
@@ -402,7 +118,7 @@ const HistorialSeguimientos = () => {
             <p className="text-gray-700 mt-2 text-lg">
               Clasificación de beneficiarios por frecuencia y estado de contacto
             </p>
-            {globalMetrics && (
+            {historySnapshot?.summary && (
               <div className="mt-3 space-y-2">
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
@@ -444,11 +160,9 @@ const HistorialSeguimientos = () => {
             <div className="text-right bg-white rounded-lg p-4 shadow-sm">
               <p className="text-sm text-gray-600 font-medium">Total de beneficiarios</p>
               <p className="text-4xl font-bold text-teal-700">{stats.total}</p>
-              {globalMetrics && (
-                <p className="text-xs text-gray-500 mt-1">
-                  {stats.beneficiariosUnicos} únicos
-                </p>
-              )}
+              <p className="text-xs text-gray-500 mt-1">
+                {stats.beneficiariosUnicos} únicos
+              </p>
             </div>
           )}
         </div>
@@ -540,6 +254,7 @@ const HistorialSeguimientos = () => {
                 <option value="al-dia">✅ Al día ({stats.alDia})</option>
                 <option value="pendiente">⏳ Pendientes ({stats.pendientes})</option>
                 <option value="urgente">⚠️ Urgentes ({stats.urgentes})</option>
+                <option value="sin-historial">📂 Sin historial ({stats.sinHistorial})</option>
               </select>
             </div>
 
@@ -605,13 +320,15 @@ const HistorialSeguimientos = () => {
         ) : (
           filteredFollowUps.map((item) => (
             <div
-              key={item.id}
+              key={item.assignmentId || item.id}
               className={`bg-white rounded-lg p-5 border-l-4 shadow-sm
                          transition-all duration-200 hover:shadow-md border border-gray-100 ${
                 item.status === 'al-dia'
                   ? 'border-l-teal-500'
                   : item.status === 'pendiente'
                   ? 'border-l-orange-500'
+                  : item.status === 'sin-historial'
+                  ? 'border-l-gray-400'
                   : 'border-l-red-500'
               }`}
             >
@@ -626,11 +343,18 @@ const HistorialSeguimientos = () => {
                       ? 'bg-teal-100 text-teal-700'
                       : item.status === 'pendiente'
                       ? 'bg-orange-100 text-orange-700'
+                      : item.status === 'sin-historial'
+                      ? 'bg-gray-100 text-gray-700'
                       : 'bg-red-100 text-red-700'
                   }`}
                 >
-                  {item.status === 'al-dia' ? '✅ Al día' : 
-                   item.status === 'pendiente' ? '⏳ Pendiente' : '⚠️ Urgente'}
+                  {item.status === 'al-dia'
+                    ? '✅ Al día'
+                    : item.status === 'pendiente'
+                    ? '⏳ Pendiente'
+                    : item.status === 'sin-historial'
+                    ? '📂 Sin historial'
+                    : '⚠️ Urgente'}
                 </span>
               </div>
 
@@ -688,6 +412,8 @@ const HistorialSeguimientos = () => {
                       ? 'bg-teal-50 text-teal-700 border-teal-200'
                       : item.status === 'pendiente'
                       ? 'bg-orange-50 text-orange-700 border-orange-200'
+                      : item.status === 'sin-historial'
+                      ? 'bg-gray-50 text-gray-700 border-gray-200'
                       : 'bg-red-50 text-red-700 border-red-200'
                   } rounded-lg p-2.5`}
                 >

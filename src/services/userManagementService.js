@@ -19,6 +19,7 @@ import {
   signInWithEmailAndPassword
 } from 'firebase/auth';
 import { db, auth } from '../firebase';
+import { assertFirestoreReady } from '../firestoreService';
 
 /**
  * Servicio para gestión de usuarios y roles
@@ -189,13 +190,20 @@ class UserManagementService {
       console.log('🔍 Usuario actual:', auth.currentUser?.email);
       console.log('🔍 Colección:', this.collection);
       
-      const q = query(
-        collection(db, this.collection),
-        orderBy('createdAt', 'desc')
-      );
-      
-      console.log('🔍 Ejecutando query...');
-      const querySnapshot = await getDocs(q);
+      let querySnapshot;
+
+      try {
+        const q = query(
+          collection(db, this.collection),
+          where('isActive', '==', true)
+        );
+        console.log('🔍 Ejecutando query (solo activos)...');
+        querySnapshot = await getDocs(q);
+      } catch (queryError) {
+        console.warn('⚠️ getAllUsers (activos) falló, usando fallback completo:', queryError?.message);
+        const collectionRef = collection(db, this.collection);
+        querySnapshot = await getDocs(collectionRef);
+      }
       const users = [];
 
       console.log('🔍 Docs encontrados:', querySnapshot.size);
@@ -209,8 +217,22 @@ class UserManagementService {
         users.push(userData);
       });
 
-      console.log(`✅ Total usuarios obtenidos: ${users.length}`);
-      return users;
+      const activeUsers = users.filter(u => u.isActive !== false);
+
+      // Ordenar en cliente por createdAt desc cuando esté disponible
+      activeUsers.sort((a, b) => {
+        const toMillis = (val) => {
+          if (!val) return 0;
+          if (typeof val.toMillis === 'function') return val.toMillis();
+          if (val.seconds) return val.seconds * 1000;
+          const d = new Date(val);
+          return isNaN(d) ? 0 : d.getTime();
+        };
+        return toMillis(b.createdAt) - toMillis(a.createdAt);
+      });
+
+      console.log(`✅ Total usuarios obtenidos: ${activeUsers.length}`);
+      return activeUsers;
     } catch (error) {
       console.error('❌ Error obteniendo usuarios:', error);
       console.error('❌ Error code:', error.code);
@@ -225,6 +247,8 @@ class UserManagementService {
    */
   async createUser(userData) {
     try {
+      assertFirestoreReady('crear usuario');
+
       const { email, password, displayName, role, isActive, ...otherData } = userData;
 
       // Validar permisos
@@ -244,6 +268,7 @@ class UserManagementService {
       const userProfile = {
         uid: profileId,
         email: email.toLowerCase().trim(),
+        emailNormalized: email.toLowerCase().trim(),
         displayName: displayName.trim(),
         role: role || 'teleoperadora',
         isActive: isActive !== false,
@@ -365,7 +390,11 @@ class UserManagementService {
         updatedBy: auth.currentUser?.uid
       };
 
-      if (updateData.email) firestoreUpdatePayload.email = updateData.email.toLowerCase().trim();
+      if (updateData.email) {
+        const normalizedEmail = updateData.email.toLowerCase().trim();
+        firestoreUpdatePayload.email = normalizedEmail;
+        firestoreUpdatePayload.emailNormalized = normalizedEmail;
+      }
       if (updateData.displayName) firestoreUpdatePayload.displayName = updateData.displayName;
       if (updateData.phone !== undefined) firestoreUpdatePayload.phone = updateData.phone;
       if (updateData.role) firestoreUpdatePayload.role = updateData.role;
@@ -432,6 +461,43 @@ class UserManagementService {
     } catch (error) {
       console.error('❌ Error eliminando usuario:', error);
       throw new Error('Error al eliminar el usuario');
+    }
+  }
+
+  /**
+   * Desactivar TODOS los perfiles que compartan el mismo email (normalizado)
+   */
+  async deactivateUserByEmail(email) {
+    if (!email) return false;
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    try {
+      const q = query(collection(db, this.collection), where('emailNormalized', '==', normalizedEmail));
+      const snap = await getDocs(q);
+
+      if (snap.empty) {
+        console.warn('⚠️ deactivateUserByEmail: no se encontraron perfiles para', normalizedEmail);
+        return false;
+      }
+
+      const timestamp = serverTimestamp();
+      const updates = [];
+
+      snap.forEach(docSnap => {
+        updates.push(updateDoc(docSnap.ref, {
+          isActive: false,
+          deletedAt: timestamp,
+          deletedBy: auth.currentUser?.uid || 'user_management_store'
+        }));
+      });
+
+      await Promise.all(updates);
+      console.log(`✅ Perfiles desactivados para email ${normalizedEmail}:`, updates.length);
+      return true;
+    } catch (error) {
+      console.error('❌ Error en deactivateUserByEmail:', error);
+      throw new Error('Error al desactivar el usuario por email');
     }
   }
 

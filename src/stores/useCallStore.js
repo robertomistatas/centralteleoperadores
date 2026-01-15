@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { normalizeCallDirection } from '../utils/dataNormalizer'; // ⭐ FASE 6.1: Nueva importación
+import logger from '../utils/logger';
 
 /**
  * Store OPTIMIZADO para manejo de datos de auditoría de llamadas
@@ -53,6 +54,12 @@ const useCallStore = create(
       // Acciones principales para auditoría
       setCallData: (data, source = 'excel') => {
         const timestamp = new Date().toISOString();
+
+        logger.info('[CALLSTORE] setCallData recibido', {
+          source,
+          registros: Array.isArray(data) ? data.length : 0,
+          muestra: Array.isArray(data) ? data.slice(0, 2) : []
+        });
         
         // ✅ CORRECCIÓN CRÍTICA: Notificar a otros stores sobre datos nuevos
         if (typeof window !== 'undefined') {
@@ -73,6 +80,19 @@ const useCallStore = create(
           _beneficiaryCache: new Map(),
           _dateCache: new Map()
         });
+
+        // Log de verificación inmediato para Historial
+        try {
+          const current = get();
+          logger.store('[CALLSTORE] CALLS EN STORE', current.callData?.length || 0);
+          logger.info('[CALLSTORE] ✅ callData actualizado', {
+            source,
+            registros: current.callData?.length || 0,
+            timestamp
+          });
+        } catch (e) {
+          logger.warn('[CALLSTORE] No se pudo loguear CALLS EN STORE', e);
+        }
         // Analizar automáticamente los nuevos datos
         get().analyzeCallData();
       },
