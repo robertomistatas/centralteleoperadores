@@ -712,4 +712,508 @@ export default {
   getAuditSnapshot,
   getHistorySnapshot,
   getOperatorSnapshot,
+  computeGlobalSnapshot,
+};
+
+// ---------------------------------------------------------------------------
+// computeGlobalSnapshot – canonical metrics engine (ported from metricsService.ts)
+// This function is the authoritative source for GlobalMetricsSnapshot objects
+// consumed by SuperAdminDashboard and any future consumers that need the new
+// contract shape.  All helpers below are private (prefixed _gs_) to avoid
+// name collisions with the legacy helpers above.
+// ---------------------------------------------------------------------------
+
+const _gs_normalizeText = (value) => (value ?? '').trim();
+const _gs_normalizeEmail = (value) => _gs_normalizeText(value).toLowerCase();
+const _gs_normalizePhoneDigits = (value) =>
+  value ? String(value).replace(/\D+/g, '') : '';
+
+const _gs_extractDirection = (call) => {
+  const raw = _gs_normalizeText(
+    call.callDirection || call.tipoLlamada || call.tipo || call.direction || ''
+  ).toLowerCase();
+  if (raw.includes('entra')) return 'entrante';
+  if (raw.includes('out') || raw.includes('sal')) return 'saliente';
+  return 'saliente';
+};
+
+const _gs_extractDurationSeconds = (call) => {
+  const candidates = [
+    call.durationSeconds,
+    call.duracion,
+    call.duration,
+    call.durationMinutes != null ? Number(call.durationMinutes) * 60 : null,
+  ].filter((v) => v !== undefined && v !== null);
+  for (const raw of candidates) {
+    const num = Number(raw);
+    if (!Number.isNaN(num) && num >= 0) return num;
+  }
+  return 0;
+};
+
+const _gs_classifyAmaiaResult = (raw) => {
+  const normalized = _gs_normalizeText(raw).toLowerCase();
+  if (
+    normalized === 'llamado exitoso' ||
+    normalized === 'llamada exitosa' ||
+    normalized === 'exitoso'
+  )
+    return 'success';
+  if (normalized === 'sin respuesta') return 'failed';
+  return 'other';
+};
+
+const _gs_toDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const _gs_toDateKey = (value) => value.toISOString().split('T')[0];
+
+const _gs_beneficiaryKeyFrom = (id, name) => {
+  const candidate = _gs_normalizeText(id) || _gs_normalizeText(name);
+  return candidate ? candidate.toLowerCase() : null;
+};
+
+const _gs_buildOperatorDirectory = (operators = []) => {
+  const byId = new Map();
+  const byEmail = new Map();
+
+  operators.forEach((op) => {
+    const email = _gs_normalizeEmail(op.email);
+    const key = email || (op.id ? String(op.id).trim() : '');
+    if (!key) return;
+    const entry = {
+      operatorId: op.id ? String(op.id) : undefined,
+      operatorKey: key,
+      displayName:
+        _gs_normalizeText(op.name || op.displayName || op.email || key) || key,
+      email: email || undefined,
+    };
+    if (entry.operatorId) byId.set(entry.operatorId, entry);
+    if (email) byEmail.set(email, entry);
+  });
+
+  return { byId, byEmail };
+};
+
+const _gs_resolveOperatorKey = (source, directory) => {
+  const directKey = _gs_normalizeEmail(source.operatorKey || null);
+  if (directKey) return directKey;
+
+  const emailCandidates = [
+    source.operatorEmail,
+    source.emailOperador,
+    source.email,
+  ];
+  for (const candidate of emailCandidates) {
+    const email = _gs_normalizeEmail(candidate || null);
+    if (email) {
+      const entry = directory.byEmail.get(email);
+      return entry ? entry.operatorKey : email;
+    }
+  }
+
+  const idCandidate = source.operatorId ?? source.id;
+  if (idCandidate) {
+    const idKey = String(idCandidate).trim();
+    const entry = directory.byId.get(idKey);
+    return entry ? entry.operatorKey : idKey;
+  }
+
+  return null;
+};
+
+const _gs_classifyStatus = (lastSuccessDate, referenceDate) => {
+  if (!lastSuccessDate) return { status: 'urgent', daysSinceLastSuccess: null };
+  const diffDays = Math.max(
+    0,
+    Math.floor(
+      (referenceDate.getTime() - lastSuccessDate.getTime()) /
+        (1000 * 60 * 60 * 24)
+    )
+  );
+  if (diffDays <= 15) return { status: 'upToDate', daysSinceLastSuccess: diffDays };
+  if (diffDays <= 30) return { status: 'pending', daysSinceLastSuccess: diffDays };
+  return { status: 'urgent', daysSinceLastSuccess: diffDays };
+};
+
+const _gs_ensureOperatorAcc = (store, operatorKey, seed) => {
+  if (!store[operatorKey]) {
+    store[operatorKey] = {
+      operatorId: seed ? seed.operatorId : undefined,
+      operatorKey,
+      displayName: seed ? seed.displayName : undefined,
+      email: seed ? seed.email : undefined,
+      callTotals: {
+        total: 0,
+        successful: 0,
+        failed: 0,
+        unresolved: 0,
+        totalDuration: 0,
+        effectiveMinutes: 0,
+      },
+      timeSeries: new Map(),
+      assignedBeneficiaries: 0,
+      contactedBeneficiaries: 0,
+      upToDate: 0,
+      pending: 0,
+      urgent: 0,
+      beneficiaryStatuses: [],
+    };
+  }
+  return store[operatorKey];
+};
+
+const _gs_updateTimeSeries = (target, dateKey, isSuccess, isFailure, duration) => {
+  if (!target.has(dateKey)) {
+    target.set(dateKey, { total: 0, successful: 0, failed: 0, duration: 0 });
+  }
+  const bucket = target.get(dateKey);
+  bucket.total += 1;
+  bucket.duration += duration;
+  if (isSuccess) bucket.successful += 1;
+  if (isFailure) bucket.failed += 1;
+};
+
+const _gs_toCallMetrics = (totals) => ({
+  totalCalls: totals.total,
+  successfulCalls: totals.successful,
+  failedCalls: totals.failed,
+  unresolvedCalls: totals.unresolved,
+  successRate: totals.total > 0 ? (totals.successful / totals.total) * 100 : 0,
+  effectiveMinutes: totals.effectiveMinutes,
+  avgMinutesPerCall:
+    totals.total > 0 ? totals.totalDuration / totals.total : 0,
+});
+
+const _gs_toBeneficiaryMetrics = (assigned, contacted) => ({
+  assignedBeneficiaries: assigned,
+  contactedBeneficiaries: contacted,
+  uncontactedBeneficiaries: Math.max(0, assigned - contacted),
+  coverageRate: assigned > 0 ? (contacted / assigned) * 100 : 0,
+});
+
+const _gs_mapTimeSeries = (source) =>
+  Array.from(source.entries())
+    .map(([date, values]) => ({
+      date,
+      totalCalls: values.total,
+      successfulCalls: values.successful,
+      failedCalls: values.failed,
+    }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+
+const _gs_normalizeAssignment = (assignment, directory) => ({
+  id: assignment.id,
+  beneficiaryKey: _gs_beneficiaryKeyFrom(
+    assignment.beneficiaryId,
+    assignment.beneficiaryName
+  ),
+  beneficiaryId: assignment.beneficiaryId,
+  beneficiaryName: assignment.beneficiaryName,
+  operatorKey: _gs_resolveOperatorKey(assignment, directory),
+  operatorId: assignment.operatorId,
+  phone: assignment.phone || assignment.primaryPhone,
+  phones: [
+    assignment.phone,
+    assignment.primaryPhone,
+    ...(assignment.phones || []),
+  ]
+    .map((p) => _gs_normalizePhoneDigits(p))
+    .filter(Boolean),
+  commune: assignment.commune,
+});
+
+const _gs_normalizeCallRecord = (call, directory, assignmentByPhone) => {
+  const rawDate = call.date || call.fecha;
+  const parsedDate = _gs_toDate(rawDate);
+  if (!parsedDate) return null;
+
+  const direction = _gs_extractDirection(call);
+  const durationSeconds = _gs_extractDurationSeconds(call);
+  const rawResult = _gs_normalizeText(
+    call.result ?? call.resultado ?? call.estado ?? ''
+  ).toLowerCase();
+  const strictResult = _gs_classifyAmaiaResult(rawResult);
+  const isSuccess = strictResult === 'success';
+  const isFailure = strictResult === 'failed';
+
+  const operatorKey = _gs_resolveOperatorKey(call, directory);
+  const beneficiaryId = call.beneficiaryId || call.idBeneficiario;
+  const beneficiaryName =
+    call.beneficiaryName || call.beneficiary || call.beneficiario || undefined;
+  const amaiaKey = _gs_beneficiaryKeyFrom(beneficiaryId, beneficiaryName);
+
+  const phoneCandidates = [
+    call.phone,
+    call.telefono,
+    call.primaryPhone,
+    ...(call.phones || []),
+  ];
+  const phone = phoneCandidates
+    .map((p) => _gs_normalizePhoneDigits(p))
+    .filter(Boolean)
+    .find((p) => assignmentByPhone.has(p));
+
+  const assignmentHit = phone ? assignmentByPhone.get(phone) : undefined;
+  const beneficiaryKey = amaiaKey || (assignmentHit ? assignmentHit.beneficiaryKey : null) || null;
+  const resolvedBeneficiaryId = beneficiaryId || (assignmentHit ? assignmentHit.beneficiaryId : undefined);
+  const resolvedBeneficiaryName = beneficiaryName || (assignmentHit ? assignmentHit.beneficiaryName : undefined);
+  const isResolved = Boolean(beneficiaryKey);
+  const isAuditable =
+    direction === 'saliente' &&
+    durationSeconds >= 10 &&
+    (isSuccess || isFailure);
+
+  return {
+    operatorKey,
+    operatorId: call.operatorId,
+    beneficiaryKey,
+    beneficiaryId: resolvedBeneficiaryId,
+    beneficiaryName: resolvedBeneficiaryName,
+    date: parsedDate,
+    dateKey: _gs_toDateKey(parsedDate),
+    direction,
+    durationSeconds,
+    result: rawResult,
+    isSuccess,
+    isFailure,
+    isResolved,
+    isAuditable,
+  };
+};
+
+const _gs_computeAllSnapshots = (data = {}) => {
+  const {
+    calls = [],
+    seguimientos = [],
+    followUps = [],
+    assignments = [],
+    operators = [],
+    referenceDate: refDate,
+  } = data;
+
+  const referenceDate = _gs_toDate(refDate) || new Date();
+  const directory = _gs_buildOperatorDirectory(operators);
+  const operatorKeyById = new Map();
+  const operatorKeyByEmail = new Map();
+
+  directory.byId.forEach((entry, id) => operatorKeyById.set(id, entry.operatorKey));
+  directory.byEmail.forEach((entry, email) => operatorKeyByEmail.set(email, entry.operatorKey));
+
+  const normalizedAssignments = assignments.map((a) =>
+    _gs_normalizeAssignment(a, directory)
+  );
+  const assignmentByPhone = new Map();
+  normalizedAssignments.forEach((assignment) => {
+    if (Array.isArray(assignment.phones)) {
+      assignment.phones.forEach((phone) => {
+        if (phone && !assignmentByPhone.has(phone))
+          assignmentByPhone.set(phone, assignment);
+      });
+    }
+  });
+
+  const callsSource = [...calls, ...seguimientos, ...followUps];
+  const beneficiaryActivity = new Map();
+  const perOperator = {};
+  const globalCallTotals = {
+    total: 0,
+    successful: 0,
+    failed: 0,
+    unresolved: 0,
+    totalDuration: 0,
+    effectiveMinutes: 0,
+  };
+  const globalTimeSeries = new Map();
+
+  callsSource.forEach((call) => {
+    const normalized = _gs_normalizeCallRecord(call, directory, assignmentByPhone);
+    if (!normalized) return;
+    if (!normalized.isResolved) {
+      if (normalized.isAuditable && (normalized.isSuccess || normalized.isFailure)) {
+        globalCallTotals.unresolved += 1;
+      }
+      return;
+    }
+
+    const durationMinutes = normalized.durationSeconds / 60;
+
+    if (normalized.isAuditable && (normalized.isSuccess || normalized.isFailure)) {
+      globalCallTotals.total += 1;
+      globalCallTotals.totalDuration += durationMinutes;
+      if (normalized.isSuccess) {
+        globalCallTotals.successful += 1;
+        globalCallTotals.effectiveMinutes += durationMinutes;
+      } else if (normalized.isFailure) {
+        globalCallTotals.failed += 1;
+      }
+      _gs_updateTimeSeries(
+        globalTimeSeries,
+        normalized.dateKey,
+        normalized.isSuccess,
+        normalized.isFailure,
+        durationMinutes
+      );
+    }
+
+    if (
+      normalized.operatorKey &&
+      normalized.isAuditable &&
+      (normalized.isSuccess || normalized.isFailure)
+    ) {
+      const entry =
+        directory.byEmail.get(_gs_normalizeEmail(call.operatorEmail || '')) ||
+        directory.byId.get(String(call.operatorId || ''));
+      const acc = _gs_ensureOperatorAcc(perOperator, normalized.operatorKey, entry);
+      if (normalized.operatorId && !acc.operatorId)
+        acc.operatorId = normalized.operatorId;
+      acc.callTotals.total += 1;
+      acc.callTotals.totalDuration += durationMinutes;
+      if (normalized.isSuccess) {
+        acc.callTotals.successful += 1;
+        acc.callTotals.effectiveMinutes += durationMinutes;
+      } else if (normalized.isFailure) {
+        acc.callTotals.failed += 1;
+      }
+      _gs_updateTimeSeries(
+        acc.timeSeries,
+        normalized.dateKey,
+        normalized.isSuccess,
+        normalized.isFailure,
+        durationMinutes
+      );
+    }
+
+    if (normalized.beneficiaryKey) {
+      if (!beneficiaryActivity.has(normalized.beneficiaryKey)) {
+        beneficiaryActivity.set(normalized.beneficiaryKey, {
+          beneficiaryId: normalized.beneficiaryId,
+          beneficiaryName: normalized.beneficiaryName,
+          lastCallDate: null,
+          lastSuccessfulDate: null,
+          totalCalls: 0,
+          successfulCalls: 0,
+        });
+      }
+      const activity = beneficiaryActivity.get(normalized.beneficiaryKey);
+      activity.totalCalls += 1;
+      if (normalized.isSuccess) {
+        activity.successfulCalls += 1;
+        if (
+          !activity.lastSuccessfulDate ||
+          normalized.date > activity.lastSuccessfulDate
+        ) {
+          activity.lastSuccessfulDate = normalized.date;
+        }
+      }
+      if (!activity.lastCallDate || normalized.date > activity.lastCallDate) {
+        activity.lastCallDate = normalized.date;
+      }
+    }
+  });
+
+  let assignedBeneficiaries = 0;
+  let contactedBeneficiaries = 0;
+  let upToDate = 0;
+  let pending = 0;
+  let urgent = 0;
+  const beneficiaryStatuses = [];
+
+  normalizedAssignments.forEach((assignment) => {
+    assignedBeneficiaries += 1;
+    const activity = assignment.beneficiaryKey
+      ? beneficiaryActivity.get(assignment.beneficiaryKey)
+      : undefined;
+    const hasContact = Boolean(activity);
+    if (hasContact) contactedBeneficiaries += 1;
+
+    const { status, daysSinceLastSuccess } = _gs_classifyStatus(
+      activity ? activity.lastSuccessfulDate : null,
+      referenceDate
+    );
+    if (status === 'upToDate') upToDate += 1;
+    if (status === 'pending') pending += 1;
+    if (status === 'urgent') urgent += 1;
+
+    const statusEntry = {
+      beneficiaryId: assignment.beneficiaryId,
+      beneficiaryName: assignment.beneficiaryName,
+      operatorId: assignment.operatorId,
+      operatorKey: assignment.operatorKey || undefined,
+      status,
+      lastSuccessfulCall:
+        activity && activity.lastSuccessfulDate
+          ? _gs_toDateKey(activity.lastSuccessfulDate)
+          : null,
+      daysSinceLastSuccess,
+      callCount: activity ? activity.totalCalls : 0,
+      successfulCallCount: activity ? activity.successfulCalls : 0,
+    };
+    beneficiaryStatuses.push(statusEntry);
+
+    if (assignment.operatorKey) {
+      const opSeed =
+        directory.byId.get(String(assignment.operatorId || '')) ||
+        directory.byEmail.get(_gs_normalizeEmail(assignment.operatorKey));
+      const acc = _gs_ensureOperatorAcc(perOperator, assignment.operatorKey, opSeed);
+      if (assignment.operatorId && !acc.operatorId)
+        acc.operatorId = assignment.operatorId;
+      acc.assignedBeneficiaries += 1;
+      if (hasContact) acc.contactedBeneficiaries += 1;
+      if (status === 'upToDate') acc.upToDate += 1;
+      if (status === 'pending') acc.pending += 1;
+      if (status === 'urgent') acc.urgent += 1;
+      acc.beneficiaryStatuses.push(statusEntry);
+    }
+  });
+
+  const historySnapshot = {
+    timeSeries: _gs_mapTimeSeries(globalTimeSeries),
+    beneficiaryStatuses,
+    referenceDate,
+  };
+
+  const perOperatorSnapshots = {};
+  Object.values(perOperator).forEach((acc) => {
+    const callsMetrics = _gs_toCallMetrics(acc.callTotals);
+    const beneficiaryMetrics = _gs_toBeneficiaryMetrics(
+      acc.assignedBeneficiaries,
+      acc.contactedBeneficiaries
+    );
+    perOperatorSnapshots[acc.operatorKey] = {
+      operatorId: acc.operatorId || acc.operatorKey,
+      operatorKey: acc.operatorKey,
+      displayName: acc.displayName,
+      email: acc.email,
+      calls: callsMetrics,
+      beneficiaries: beneficiaryMetrics,
+      temporal: { upToDate: acc.upToDate, pending: acc.pending, urgent: acc.urgent },
+      history: {
+        timeSeries: _gs_mapTimeSeries(acc.timeSeries),
+        beneficiaryStatuses: acc.beneficiaryStatuses,
+        referenceDate,
+      },
+      referenceDate,
+    };
+  });
+
+  const globalSnapshot = {
+    calls: _gs_toCallMetrics(globalCallTotals),
+    beneficiaries: _gs_toBeneficiaryMetrics(assignedBeneficiaries, contactedBeneficiaries),
+    temporal: { upToDate, pending, urgent },
+    perOperator: perOperatorSnapshots,
+    history: historySnapshot,
+    referenceDate,
+  };
+
+  return { globalSnapshot, operatorKeyById, operatorKeyByEmail };
+};
+
+export const computeGlobalSnapshot = (data = {}) => {
+  const { globalSnapshot } = _gs_computeAllSnapshots(data);
+  return globalSnapshot;
 };
